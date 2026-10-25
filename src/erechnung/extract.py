@@ -59,9 +59,10 @@ def _to_date(text: str) -> date | None:
 
 def _to_amount(text: str) -> Decimal | None:
     try:
-        return Decimal(text.replace(",", "."))
+        d = Decimal(text.replace(",", "."))
     except InvalidOperation:
         return None
+    return d if d.is_finite() else None
 
 
 def extract_fields(root: etree._Element, syntax: Syntax, xpath_dir: Path) -> Felder:

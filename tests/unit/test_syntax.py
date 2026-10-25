@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from erechnung.pdf import extract_embedded_xml
 from erechnung.syntax import (
@@ -60,7 +61,12 @@ def test_malformed_and_unsupported():
         detect_syntax(parse_xml(b"<other xmlns='urn:x'/>"))
 
 
-def test_parser_refuses_external_entities():
-    evil = b'<?xml version="1.0"?><!DOCTYPE a [<!ENTITY x SYSTEM "file:///etc/passwd">]><a>&x;</a>'
+def test_parser_refuses_external_entities(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("GEHEIM-4711", encoding="utf-8")
+    evil = (
+        '<?xml version="1.0"?><!DOCTYPE a [<!ENTITY x SYSTEM "' + secret.as_uri() + '">]><a>&x;</a>'
+    ).encode("utf-8")
     root = parse_xml(evil)
+    assert b"GEHEIM-4711" not in etree.tostring(root)
     assert (root.text or "") == ""
