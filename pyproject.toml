@@ -1,6 +1,6 @@
 [project]
 name = "erechnung"
-version = "0.1.0"
+version = "0.1.1"
 description = "E-Rechnung-Eingang: Prüfdienst für XRechnung und ZUGFeRD mit dem KoSIT-Validator, Feldextraktion und Archivnamen."
 readme = "README.md"
 requires-python = ">=3.12"
