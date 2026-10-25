@@ -40,8 +40,21 @@ def main() -> None:
     print(f"config.zip    sha256 {cfg_sha}")
     if print_only:
         return
-    if s.validator_sha256 != jar_sha or s.config_sha256 != cfg_sha:
-        sys.exit("checksum mismatch against config.toml; refusing to unpack")
+    mismatched = [
+        (path, got, want)
+        for path, got, want in ((TARGET / "validator.jar", jar_sha, s.validator_sha256), (TARGET / "config.zip", cfg_sha, s.config_sha256))
+        if got != want
+    ]
+    if mismatched:
+        for path, got, want in mismatched:
+            print(f"checksum mismatch: {path} has sha256 {got}, config.toml expects {want}", file=sys.stderr)
+        stale = [str(p) for p in (TARGET / "validator.jar", TARGET / "config.zip", TARGET / "config")]
+        print(
+            "If config.toml was bumped to a new version, the cached files are the old release; delete them and rerun:\n  "
+            + "\n  ".join(stale),
+            file=sys.stderr,
+        )
+        sys.exit(1)
     cfg_dir = TARGET / "config"
     if not (cfg_dir / "scenarios.xml").exists():
         with zipfile.ZipFile(TARGET / "config.zip") as zf:

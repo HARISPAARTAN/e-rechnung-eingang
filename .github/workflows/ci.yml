@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   unit:
     runs-on: ubuntu-24.04
@@ -13,7 +16,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-      - run: uv sync --dev
+      - run: uv sync --locked --dev
       - run: uv run ruff check .
       - run: uv run pytest tests/unit tests/api -q
 
@@ -29,20 +32,34 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - run: uv sync --dev
+      - run: uv sync --locked --dev
       - run: uv run python tools/get_validator.py
       - run: uv run pytest tests/validator -m validator -q
 
   image:
     runs-on: ubuntu-24.04
     needs: unit
+    env:
+      ERE_API_KEY: ci-throwaway-key
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t erechnung-eingang:ci .
-      - run: |
-          docker run -d --name ere -p 8080:8080 erechnung-eingang:ci
-          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8080/health && break; sleep 2; done
-          curl -fs http://127.0.0.1:8080/health | grep -q '"status":"ok"'
-          curl -fs -F "file=@fixtures/xrechnung/01.01a-INVOICE_ubl.xml" http://127.0.0.1:8080/validate | grep -q '"gueltig":true'
-          docker logs ere --tail 20
-          docker rm -f ere
+      - name: Smoke test
+        run: |
+          set -eu
+          docker run -d --name ere -p 8080:8080 -e ERE_API_KEY erechnung-eingang:ci
+          # /health answers 503 while the daemon starts; wait for the body, not the status code
+          for i in $(seq 1 60); do
+            if curl -s --max-time 2 http://127.0.0.1:8080/health | grep -q '"status":"ok"'; then break; fi
+            sleep 2
+          done
+          curl -fs http://127.0.0.1:8080/health | tee /dev/stderr | grep -q '"auth":true'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -F "file=@fixtures/xrechnung/01.01a-INVOICE_ubl.xml" http://127.0.0.1:8080/validate)" = 401
+          curl -fs -H "X-Api-Key: $ERE_API_KEY" -F "file=@fixtures/xrechnung/01.01a-INVOICE_ubl.xml" http://127.0.0.1:8080/validate | grep -q '"gueltig":true'
+          curl -fs -H "X-Api-Key: $ERE_API_KEY" -F "file=@fixtures/zugferd/synthetisch/nordstern-elbnetz-RE-2026-0042.pdf" http://127.0.0.1:8080/validate | grep -q '"gueltig":true'
+      - name: Container logs
+        if: always()
+        run: docker logs ere --tail 50 || true
+      - name: Remove container
+        if: always()
+        run: docker rm -f ere || true

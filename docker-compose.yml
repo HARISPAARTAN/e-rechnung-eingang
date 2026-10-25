@@ -4,6 +4,8 @@ services:
     image: erechnung-eingang:local
     container_name: ere-service
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${ERE_PORT:-8080}:8080"
     environment:
+      # Required unless ERE_AUTH_DISABLED=1 (development only); without either the container exits at start.
       ERE_API_KEY: "${ERE_API_KEY:-}"
+      ERE_AUTH_DISABLED: "${ERE_AUTH_DISABLED:-0}"

@@ -1,8 +1,16 @@
 .venv
 .git
+.github
 .validator
-fixtures/_downloads
+.pytest_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+fixtures
 tests
+tools
 docs
 build
 dist
