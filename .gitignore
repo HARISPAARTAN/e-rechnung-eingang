@@ -9,3 +9,4 @@ dist/
 fixtures/_downloads/
 .env
 *.log
+deploy/.secrets/

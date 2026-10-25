@@ -63,3 +63,16 @@ jobs:
       - name: Remove container
         if: always()
         run: docker rm -f ere || true
+
+  bicep:
+    runs-on: ubuntu-24.04
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --dev
+      - name: Compile the Bicep template
+        run: az bicep build --file deploy/containerapp.bicep --stdout > /dev/null
+      - run: uv run pytest tests/unit/test_bicep.py -q -rs
