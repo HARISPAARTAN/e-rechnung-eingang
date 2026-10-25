@@ -7,8 +7,8 @@
   Federated Credentials wegen der beiden Subject-Formen von GitHub), Runbook `deploy/README.md`.
 - Workflows: `release` baut und veröffentlicht das Image auf GHCR und aktualisiert die Container App per OIDC, danach
   Smoke-Test gegen die Live-URL (`tools/smoke_remote.py`, Artefakt `smoke.xml`); `keepalive` ruft monatlich `/health` auf.
-- Smoke-Test: Entscheidung über eine Anfrage ohne Körper mit `Content-Length` 11 MiB (erwartet 413, auf jedem System) und
-  eine Gegenprobe mit 9 MiB; der echte Upload gilt bei 413 oder einem schnellen Abbruch (unter 5 s) als abgelehnt, wenn
+- Smoke-Test: Entscheidung über eine Anfrage ohne Körper mit `Content-Length` 11 MiB (erwartet 413, sollte auf jedem System gelten) und
+  eine Gegenprobe mit 9 MiB, die in den Timeout laufen muss; der echte Upload gilt bei 413 oder einem schnellen Abbruch (unter 5 s) als abgelehnt, wenn
   danach ein gültiges UBL 200 und `gueltig: true` ergibt, Timeouts schlagen fehl. `deploy/github-oidc.sh` legt beide
   Credentials an, vergleicht das Subject und bricht bei Abweichung ab.
 - Gemessen: Kaltstart 22,6 s, warm 0,1 s (siehe "M2 Betrieb" unten und README "Betrieb auf Azure").

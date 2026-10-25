@@ -5,7 +5,8 @@ body. Two observations are combined:
 
 1. Deterministic probe (decides on any OS): ``POST /validate`` with the key, ``Content-Length`` of 11 MiB and no body,
    sent with http.client. It must return 413 within the timeout. A second probe declares 9 MiB (below the limit) and must
-   not return 413 (the server then waits for the body, so the probe times out); that shows the 413 depends on the size.
+   end in a timeout (the server waits for the body; any status or other error fails); that shows the 413 depends on
+   the size.
 2. Real upload of an 11 MiB body with httpx. Expected: 413. Observed on one Windows machine (24 of 24 uploads at 10.1,
    10.5 and 11 MiB) and not on one GitHub Linux runner run: the ingress closes the connection while the client is still
    writing and a client that writes the whole body before it reads loses the response, which appears as a transport
@@ -41,6 +42,7 @@ RESET_CLASSES = (
     "RemoteProtocolError",
 )  # what a closed connection looks like in httpx
 RESET_MAX_SECONDS = 5.0
+UNDER_LIMIT_RESULT = "error:TimeoutError"  # the only accepted outcome of the 9 MiB probe
 
 
 def _monotonic() -> float:
@@ -101,7 +103,7 @@ def oversize_rejected(
     declared / under_limit: result of declared_length_probe at 11 MiB and 9 MiB; too_large: status of the real upload or
     ``"reset:<Class>"`` or ``"error:<Class>"``; after_reset: verdict of a valid UBL call made after a reset.
     """
-    if declared != 413 or under_limit == 413:
+    if declared != 413 or under_limit != UNDER_LIMIT_RESULT:
         return False
     if too_large == 413:
         return True

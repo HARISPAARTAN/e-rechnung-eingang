@@ -160,7 +160,7 @@ Gemessen am 2026-10-25 (vom Heimnetz des Eigentümers, Revision `ca-erechnung--0
   Obergrenze für rund 545 Sitzungen im Monat zu je 330 Replik-Sekunden (Kaltstart plus 300 s Wartezeit bis zur
   Abschaltung). Eine Demo mit 30 Sitzungen und 500 Prüfungen (zusammen 150 s) braucht rund 10.050 vCPU-s und
   20.100 GiB-s, also rund 5,6 Prozent. Eine dauerhaft laufende Replik käme auf das 14-Fache des Kontingents.
-- **Übergroße Uploads:** Der Dienst antwortet über 10 MiB mit 413, entschieden an der angegebenen `Content-Length`. Beobachtet:
+- **Übergroße Uploads:** Der Dienst antwortet über etwa 10 MiB (plus einem kleinen Spielraum für den Multipart-Rahmen) mit 413, entschieden an der angegebenen `Content-Length`. Beobachtet:
   `curl` (getestet bei 10,1 bis 11 MiB) und ein GitHub-Linux-Runner sehen das 413; `httpx` auf einem Windows-Rechner sah
   bei 24 von 24 Uploads statt der Antwort einen Verbindungsabbruch, vermutlich weil der Ingress die Verbindung schließt,
   während noch geschrieben wird. Clients sollten einen schnellen Abbruch bei einem Upload über 10 MiB als abgelehnt

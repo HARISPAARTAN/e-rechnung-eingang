@@ -35,6 +35,7 @@ trap 'rm -f "$CRED_FILE"' EXIT
 ensure_credential() {
   local count current
   count=$(az ad app federated-credential list --id "$OBJ_ID" --query "[?name=='${1}'] | length(@)" -o tsv)
+  count=${count%$'\r'}  # az on Windows can end its output with a carriage return
   if [ "$count" = "0" ]; then
     printf '{"name":"%s","issuer":"https://token.actions.githubusercontent.com","subject":"%s","audiences":["api://AzureADTokenExchange"]}\n' \
       "$1" "$2" > "$CRED_FILE"
@@ -43,6 +44,7 @@ ensure_credential() {
     return 0
   fi
   current=$(az ad app federated-credential list --id "$OBJ_ID" --query "[?name=='${1}'].subject | [0]" -o tsv)
+  current=${current%$'\r'}
   if [ "$current" = "$2" ]; then
     echo "Federated credential ${1} existiert bereits"
     return 0

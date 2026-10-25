@@ -30,16 +30,17 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
    `uv run python tools/smoke_remote.py --base-url https://<fqdn>`
    (liest den Schlüssel aus `deploy/.secrets/ere_api_key`; prüft Health, 401 ohne Schlüssel, gültige XRechnung und gültiges
    ZUGFeRD-PDF, 413 über 10 MiB).
-   Der 413-Fall: Der Dienst entscheidet an der angegebenen `Content-Length` (ASGI-Guard) und antwortet 413, bevor er den
+   Der 413-Fall: Der Dienst entscheidet an der angegebenen `Content-Length` (ASGI-Guard, Grenze 10 MiB plus ein kleiner Spielraum für den Multipart-Rahmen) und antwortet 413, bevor er den
    Körper liest (Container-Log: `POST /validate 413 Content Too Large`). Danach trennt der Ingress die Verbindung, während
    der Client noch schreibt. Beobachtet: `curl` zeigt bei 10,1, 10,5 und 11 MiB, mit und ohne `Expect: 100-continue` und
    mit `--http1.1`, jedes Mal 413. Der Smoke-Test mit `httpx` auf einem Windows-Rechner bekam bei 24 von 24 Uploads
    (10,1, 10,5 und 11 MiB) stattdessen `ReadError`, vermutlich weil er den ganzen Körper schreibt, bevor er liest, und der
    Abbruch die Antwort verwirft; auf einem GitHub-Linux-Runner (Deploy-Job von `v0.2.0-rc2`) kam 413 an. Das sind zwei
    Beobachtungen, keine Gesetzmäßigkeit. Die Regel in `tools/smoke_remote.py` stützt sich deshalb nicht auf den Upload:
-   - Entscheidend ist eine Anfrage ohne Körper mit `Content-Length: 11534336` (`http.client`); sie liefert auf jedem
-     System 413 nach rund 0,1 s. Eine zweite mit 9 MiB darf kein 413 liefern (der Dienst wartet auf den Körper, die
-     Anfrage läuft nach 3 s in den Timeout); so ist das 413 an die Größe gebunden.
+   - Entscheidend ist eine Anfrage ohne Körper mit `Content-Length: 11534336` (`http.client`); sie sollte auf jedem
+     System 413 liefern (gemessen von Windows aus nach rund 0,1 s; der erste Lauf auf einem Linux-Runner ist die
+     eigentliche Prüfung). Eine zweite mit 9 MiB muss in den Timeout laufen (der Dienst wartet auf den Körper, nach 3 s; jeder Status und jeder
+     andere Fehler zählt als Fehlschlag); so ist das 413 an die Größe gebunden.
    - Der echte Upload von 11 MiB gilt bei 413 als abgelehnt, ebenso bei einem Abbruch (`WriteError`, `ReadError`,
      `RemoteProtocolError`, Ausgabe `reset:<Klasse>`) in unter 5 s, wenn danach ein gültiges UBL mit Schlüssel noch 200 und
      `gueltig: true` liefert (Feld `after_reset`). Ein Timeout, `ConnectError` oder ein anderer Status ist ein Fehler.

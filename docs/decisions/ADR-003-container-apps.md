@@ -58,7 +58,7 @@ Der Kaltstart (Container plus Daemon-Start) wird in Kauf genommen.
 - Übergroße Uploads: Der Dienst antwortet 413 und entscheidet an der angegebenen `Content-Length`. Beobachtet (ein
   Windows-Rechner, ein Runner-Lauf): der Ingress trennt danach die Verbindung, und ein Client, der den ganzen Körper vor
   dem Lesen schreibt (`httpx` unter Windows), sieht einen Abbruch statt der Antwort. Der Smoke-Test entscheidet deshalb
-  mit einer Anfrage ohne Körper und `Content-Length` von 11 MiB (erwartet 413 auf jedem System), prüft mit 9 MiB, dass
+  mit einer Anfrage ohne Körper und `Content-Length` von 11 MiB (erwartet 413, sollte auf jedem System gelten), prüft mit 9 MiB (muss in den Timeout laufen), dass
   das 413 von der Größe abhängt, und wertet den echten Upload nur als abgelehnt bei 413 oder bei einem Abbruch
   (`WriteError`, `ReadError`, `RemoteProtocolError`) in unter 5 s, wenn danach ein gültiges UBL noch 200 und
   `gueltig: true` ergibt. Ein Timeout oder `ConnectError` ist ein Fehler.

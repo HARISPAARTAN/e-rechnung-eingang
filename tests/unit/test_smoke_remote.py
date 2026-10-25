@@ -199,7 +199,11 @@ RESET_OK = {"status": 200, "gueltig": True}
     [
         (413, "error:TimeoutError", 413, 0.2, None, True),
         (413, "error:TimeoutError", "reset:WriteError", 1.0, RESET_OK, True),
-        (413, 200, "reset:ReadError", 1.0, RESET_OK, True),
+        (413, 200, "reset:ReadError", 1.0, RESET_OK, False),  # 9 MiB must time out, not answer
+        (413, 404, 413, 0.2, None, False),
+        (413, 502, 413, 0.2, None, False),
+        (413, "error:ConnectionResetError", 413, 0.2, None, False),
+        (413, "error:ConnectionRefusedError", 413, 0.2, None, False),
         (413, "error:TimeoutError", "reset:RemoteProtocolError", 4.9, RESET_OK, True),
         (413, "error:TimeoutError", "reset:ReadError", 5.0, RESET_OK, False),  # too slow
         (413, "error:TimeoutError", "reset:ReadError", 1.0, None, False),  # no follow-up proof

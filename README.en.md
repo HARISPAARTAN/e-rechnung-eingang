@@ -159,7 +159,7 @@ Measured on 2026-10-25 (from the owner's home network, revision `ca-erechnung--0
   about 545 sessions a month at 330 replica-seconds each (cold start plus 300 s wait before shutdown). A demo with
   30 sessions and 500 checks (150 s together) needs about 10,050 vCPU-s and 20,100 GiB-s, roughly 5.6 percent. A replica that never
   scaled down would use 14 times the grant.
-- **Oversized uploads:** the service answers 413 above 10 MiB, decided from the declared `Content-Length`. Observed:
+- **Oversized uploads:** the service answers 413 above about 10 MiB (plus a small slack for the multipart framing), decided from the declared `Content-Length`. Observed:
   `curl` (tested at 10.1 to 11 MiB) and a GitHub Linux runner see the 413; `httpx` on one Windows machine saw a
   connection reset instead of the response in 24 of 24 uploads, probably because the ingress closes the connection
   while the client is still writing. Clients should treat a fast reset on an upload over 10 MiB as rejected, but not

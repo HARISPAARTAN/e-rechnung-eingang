@@ -31,10 +31,11 @@ case "$1 $2 $3" in
       [[ "$*" =~ name==\'([^\']+)\' ]] || exit 3
       name="${BASH_REMATCH[1]}"
       if [[ "$*" == *length* ]]; then
-        [ -f "$STUB_DIR/cred-$name" ] && echo 1 || echo 0
+        if [ -f "$STUB_DIR/cred-$name" ]; then v=1; else v=0; fi
       else
-        cat "$STUB_DIR/cred-$name"
+        v=$(cat "$STUB_DIR/cred-$name")
       fi
+      if [ -n "$AZ_CRLF" ]; then printf '%s\r\n' "$v"; else echo "$v"; fi
     elif [ "$4" = "create" ]; then
       all="$*"; file="${all#*@}"; file="${file%% *}"
       name=$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$file")
@@ -70,11 +71,13 @@ def env(tmp_path):
     return {"stubs": stubs, "state": state, "work": work}
 
 
-def run_script(env, gh_mode="ok"):
+def run_script(env, gh_mode="ok", crlf=False):
     e = dict(os.environ)
     e["PATH"] = f"{env['stubs']}{os.pathsep}{e['PATH']}"
     e["STUB_DIR"] = str(env["state"])
     e["GH_MODE"] = gh_mode
+    if crlf:
+        e["AZ_CRLF"] = "1"
     return subprocess.run(
         [BASH, str(SCRIPT)], cwd=env["work"], env=e, capture_output=True, text=True, timeout=60
     )
@@ -107,6 +110,13 @@ def test_rerun_is_idempotent(env):
     assert "federated-credential create" not in new_calls
     assert "ad app create" not in new_calls
     assert "role assignment create" not in new_calls
+    assert r.stdout.count("existiert bereits") == 3
+
+
+def test_rerun_accepts_az_output_with_carriage_returns(env):
+    assert run_script(env).returncode == 0
+    r = run_script(env, crlf=True)  # az on Windows can end tsv lines with CRLF
+    assert r.returncode == 0, r.stderr
     assert r.stdout.count("existiert bereits") == 3
 
 
