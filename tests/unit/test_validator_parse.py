@@ -3,7 +3,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from erechnung.validator import ValidatorClient, ValidatorError, parse_report
+from erechnung.validator import (
+    ValidatorClient,
+    ValidatorError,
+    ValidatorRejectedInput,
+    parse_report,
+    short_location,
+)
 
 REPORTS = Path(__file__).resolve().parents[2] / "fixtures" / "reports"
 
@@ -53,3 +59,52 @@ def test_validate_quotes_the_name_in_the_url(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     ValidatorClient("http://d:8081").validate(b"<a/>", "a b/../c?.xml")
     assert seen == ["http://d:8081/a%20b%2F..%2Fc%3F.xml"]
+
+
+def test_report_xml_is_not_kept_after_parsing():
+    r = parse_report((REPORTS / "accept-ubl.xml").read_bytes())
+    assert not hasattr(r, "bericht_xml")
+
+
+def test_ort_uses_prefixes_instead_of_namespace_uris():
+    r = parse_report((REPORTS / "reject-cii.xml").read_bytes())
+    first = r.fehler[0]
+    assert first.ort == (
+        "/rsm:CrossIndustryInvoice[1]/rsm:SupplyChainTradeTransaction[1]"
+        "/ram:ApplicableHeaderTradeSettlement[1]/ram:ApplicableTradeTax[1]"
+    )
+    assert all("Q{" not in (m.ort or "") for m in r.fehler + r.warnungen)
+
+
+def test_short_location_keeps_unknown_namespaces():
+    assert short_location("/Q{urn:x}a[1]/Q{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}ID[1]") == (
+        "/Q{urn:x}a[1]/cbc:ID[1]"
+    )
+    assert short_location(None) is None
+
+
+def _respond_with(monkeypatch, status, content):
+    monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Response(status, content=content))
+
+
+def test_daemon_4xx_with_report_is_rejected_input_with_first_error(monkeypatch):
+    _respond_with(monkeypatch, 422, (REPORTS / "reject-cii.xml").read_bytes())
+    with pytest.raises(ValidatorRejectedInput) as info:
+        ValidatorClient("http://d:8081").validate(b"<a/>")
+    assert str(info.value).startswith("[BR-CO-17]-VAT category tax amount")
+    assert isinstance(info.value, ValidatorError)
+
+
+def test_daemon_4xx_without_report_uses_the_first_300_characters(monkeypatch):
+    _respond_with(monkeypatch, 400, b"bad request " + b"y" * 500)
+    with pytest.raises(ValidatorRejectedInput) as info:
+        ValidatorClient("http://d:8081").validate(b"<a/>")
+    assert str(info.value).startswith("bad request ") and len(str(info.value)) == 300
+
+
+def test_daemon_5xx_stays_a_transient_validator_error(monkeypatch):
+    _respond_with(monkeypatch, 500, b"<html>Internal Server Error</html>")
+    with pytest.raises(ValidatorError) as info:
+        ValidatorClient("http://d:8081").validate(b"<a/>")
+    assert not isinstance(info.value, ValidatorRejectedInput)
+    assert str(info.value) == "Validator antwortete mit HTTP 500"

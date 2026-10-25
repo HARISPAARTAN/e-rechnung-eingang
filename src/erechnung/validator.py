@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
@@ -14,9 +15,26 @@ XHTML = "http://www.w3.org/1999/xhtml"
 _NS = {"rep": REP, "s": SCN, "html": XHTML}
 _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True)
 
+# xpathLocation in the report uses Q{namespace}name steps; these prefixes keep `ort` short and readable.
+ORT_PREFIXES = {
+    "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2": "ubl",
+    "urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2": "cn",
+    "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2": "cbc",
+    "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2": "cac",
+    "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100": "rsm",
+    "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100": "ram",
+    "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100": "udt",
+    "urn:un:unece:uncefact:data:standard:QualifiedDataType:100": "qdt",
+}
+_QNAME = re.compile(r"Q\{([^}]*)\}")
+
 
 class ValidatorError(RuntimeError):
-    """The daemon is unreachable, misconfigured or failed to process the document."""
+    """The daemon is unreachable, misconfigured or failed to process the document (transient, HTTP 502)."""
+
+
+class ValidatorRejectedInput(ValidatorError):
+    """The daemon refused the document itself with a 4xx (permanent input error, HTTP 422)."""
 
 
 @dataclass(frozen=True)
@@ -37,7 +55,6 @@ class Pruefergebnis:
     fehler: list[Meldung] = field(default_factory=list)
     warnungen: list[Meldung] = field(default_factory=list)
     bericht_html: str | None = None
-    bericht_xml: bytes = b""
 
 
 def _int(value: str | None) -> int | None:
@@ -45,6 +62,18 @@ def _int(value: str | None) -> int | None:
         return int(value) if value not in (None, "") else None
     except ValueError:
         return None
+
+
+def short_location(location: str | None) -> str | None:
+    """Replace Q{namespace} with the usual prefix (ubl:, cbc:, cac:, rsm:, ram:, udt:, qdt:); unknown namespaces stay."""
+    if not location:
+        return location
+
+    def repl(m: re.Match[str]) -> str:
+        prefix = ORT_PREFIXES.get(m.group(1))
+        return f"{prefix}:" if prefix else m.group(0)
+
+    return _QNAME.sub(repl, location)
 
 
 def parse_report(xml: bytes) -> Pruefergebnis:
@@ -69,7 +98,7 @@ def parse_report(xml: bytes) -> Pruefergebnis:
             ebene=(m.get("level") or "information").lower(),
             code=m.get("code"),
             text=" ".join((m.text or "").split()),
-            ort=m.get("xpathLocation"),
+            ort=short_location(m.get("xpathLocation")),
             zeile=_int(m.get("lineNumber")),
             spalte=_int(m.get("columnNumber")),
         )
@@ -83,7 +112,17 @@ def parse_report(xml: bytes) -> Pruefergebnis:
         gueltig = empfehlung == "accept" and not fehler
     html = root.find(".//html:html", _NS)
     bericht_html = etree.tostring(html, encoding="unicode") if html is not None else None
-    return Pruefergebnis(gueltig, empfehlung, szenario, fehler, warnungen, bericht_html, xml)
+    return Pruefergebnis(gueltig, empfehlung, szenario, fehler, warnungen, bericht_html)
+
+
+def _rejection_message(body: bytes, text: str) -> str:
+    try:
+        report = parse_report(body)
+    except ValidatorError:
+        return text[:300]
+    if report.fehler:
+        return report.fehler[0].text
+    return text[:300]
 
 
 class ValidatorClient:
@@ -108,4 +147,6 @@ class ValidatorClient:
             raise ValidatorError(f"Validator nicht erreichbar: {exc}") from exc
         if resp.status_code in (200, 406):
             return parse_report(resp.content)
-        raise ValidatorError(f"Validator antwortete mit HTTP {resp.status_code}: {resp.text[:300]}")
+        if 400 <= resp.status_code < 500:
+            raise ValidatorRejectedInput(_rejection_message(resp.content, resp.text))
+        raise ValidatorError(f"Validator antwortete mit HTTP {resp.status_code}")

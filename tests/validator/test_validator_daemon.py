@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from erechnung.pdf import extract_embedded_xml
-from erechnung.validator import ValidatorClient, ValidatorError
+from erechnung.validator import ValidatorClient, ValidatorRejectedInput
 
 pytestmark = pytest.mark.validator
 FX = Path(__file__).resolve().parents[2] / "fixtures"
@@ -44,6 +44,20 @@ def test_tax_error_invoice_is_rejected_with_a_br_rule(validator_url):
     assert r.gueltig is False and any((m.code or "").startswith("BR-") for m in r.fehler)
 
 
-def test_malformed_xml_raises_validator_error(validator_url):
-    with pytest.raises(ValidatorError):
+def test_malformed_xml_is_rejected_input(validator_url):
+    with pytest.raises(ValidatorRejectedInput) as info:
         ValidatorClient(validator_url).validate(b"<a><b></a>", "kaputt.xml")
+    assert str(info.value)
+
+
+def test_doctype_is_rejected_input_with_the_report_message(validator_url):
+    xml = b'<?xml version="1.0"?><!DOCTYPE a [<!ENTITY n "42">]><a>RE-&n;-1</a>'
+    with pytest.raises(ValidatorRejectedInput) as info:
+        ValidatorClient(validator_url).validate(xml, "doctype.xml")
+    assert "DOCTYPE" in str(info.value) and "<rep:" not in str(info.value)
+
+
+@pytest.mark.parametrize("name", ["nordstern-elbnetz-RE-2026-0045-nachlass.xml", "nordstern-elbnetz-RE-2026-0045-nachlass_ubl.xml"])
+def test_synthetic_allowance_invoice_is_accepted(validator_url, name):
+    r = ValidatorClient(validator_url).validate((FX / "zugferd" / "synthetisch" / name).read_bytes(), name)
+    assert r.gueltig is True and r.szenario and r.szenario.startswith("EN16931"), [(m.code, m.text) for m in r.fehler]
