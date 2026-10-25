@@ -30,7 +30,7 @@ def test_prefers_known_name_over_other_xml():
 
     pdf = pikepdf.new()
     pdf.add_blank_page(page_size=(595, 842))
-    pdf.attachments["notes.xml"] = pikepdf.AttachedFileSpec(pdf, b"<n/>")
+    pdf.attachments["aaa-notes.xml"] = pikepdf.AttachedFileSpec(pdf, b"<n/>")
     pdf.attachments["factur-x.xml"] = pikepdf.AttachedFileSpec(pdf, b"<f/>")
     out = io.BytesIO()
     pdf.save(out)
