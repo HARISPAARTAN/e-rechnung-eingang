@@ -27,6 +27,7 @@ def _mock(router, *, ubl_status=200, too_large=None):
         side_effect=[
             httpx.Response(503, json={"status": "degraded"}),
             httpx.Response(200, json={"status": "ok"}),
+            httpx.Response(200, json={"status": "ok"}),  # health re-check after the oversize upload
         ]
     )
     router.post(f"{BASE}/validate").mock(
@@ -83,12 +84,52 @@ def test_run_reports_transport_error_as_status_zero(fake_clock):
     assert result["ok"] is False
 
 
-def test_run_reports_reset_on_oversize_case(fake_clock):
+def test_run_accepts_reset_on_oversize_case_when_service_stays_healthy(fake_clock):
     with respx.mock() as router:
         _mock(router, too_large=httpx.WriteError("connection reset"))
         result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
     assert result["too_large"] == "reset"
+    assert result["health_after"] == 200
+    assert result["ok"] is True
+
+
+def test_run_fails_on_reset_when_service_is_down_afterwards(fake_clock):
+    with respx.mock() as router:
+        router.get(f"{BASE}/health").mock(
+            side_effect=[
+                httpx.Response(200, json={"status": "ok"}),
+                httpx.Response(503, json={"status": "degraded"}),
+            ]
+        )
+        router.post(f"{BASE}/validate").mock(
+            side_effect=[
+                httpx.Response(401),
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.WriteError("connection reset"),
+            ]
+        )
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == "reset"
+    assert result["health_after"] == 503
     assert result["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("too_large", "health_after", "expected"),
+    [
+        (413, 200, True),
+        (413, 0, True),  # the service answered; the later health call is not part of the rule
+        ("reset", 200, True),
+        ("reset", 503, False),
+        ("reset", 0, False),
+        (200, 200, False),  # the oversize file was accepted
+        (422, 200, False),
+        (0, 200, False),
+    ],
+)
+def test_oversize_rule(too_large, health_after, expected):
+    assert smoke_remote.oversize_rejected(too_large, health_after) is expected
 
 
 def test_run_fails_on_wrong_oversize_status(fake_clock):
