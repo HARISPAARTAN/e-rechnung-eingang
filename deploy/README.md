@@ -32,9 +32,17 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
    wird. Dann steht `"too_large": "reset"` in der Ausgabe statt 413. Das wird beim ersten echten Lauf geprüft, bevor ein
    Release-Tag gesetzt wird.
 7. Automatische Bereitstellung per GitHub Actions (ohne gespeicherte Azure-Passwörter, nur OIDC):
-   1. `deploy/github-oidc.sh` ausführen (nach Schritt 5, die Ressourcengruppe muss existieren). Es legt die Entra-App
-      `erechnung-github-deploy` mit Federated Credential für die GitHub-Umgebung `production` an, gibt ihr Contributor nur auf
-      `rg-erechnung` und gibt drei Kennungen aus.
+   1. `deploy/github-oidc.sh` ausführen (nach Schritt 5, die Ressourcengruppe muss existieren; braucht `gh` mit Anmeldung). Es
+      legt die Entra-App `erechnung-github-deploy` an, gibt ihr Contributor nur auf `rg-erechnung` und gibt drei Kennungen
+      aus. Es legt **zwei** Federated Credentials für die GitHub-Umgebung `production` an, weil Entra den Subject-Wert
+      exakt vergleicht und GitHub ihn in zwei Formen ausstellt:
+      - `github-production`: `repo:HARISPAARTAN/e-rechnung-eingang:environment:production` (Namen)
+      - `github-production-ids`: `repo:HARISPAARTAN@<Owner-ID>/e-rechnung-eingang@<Repo-ID>:environment:production`
+        (numerische IDs, das Skript liest sie mit `gh api repos/HARISPAARTAN/e-rechnung-eingang --jq '.owner.id, .id'`).
+      Beim ersten echten Deploy (Tag `v0.2.0-rc2`) zeigte GitHub die ID-Form; ohne dieses Credential scheitert der Login
+      mit `AADSTS700213: No matching federated identity record found for presented assertion subject ...`. Die Fehlermeldung
+      nennt den erwarteten Subject-Wert; ein neu gelegtes Repository oder ein Umbenennen/Übertragen ändert die IDs
+      bzw. Namen, dann das Skript erneut ausführen (es legt nur Fehlendes an).
    2. **[Eigentümer]** GitHub > Repository > Settings > Environments > New environment `production`. Darin drei Secrets
       eintragen: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (Werte aus der Skriptausgabe) und das Secret
       `ERE_API_KEY` (Inhalt der Datei `deploy/.secrets/ere_api_key`, am besten ohne Umweg über die Zwischenablage-Historie).
