@@ -1,5 +1,7 @@
 """tools/smoke_remote.py against a mocked service (respx); no network."""
 
+import http.server
+import threading
 from pathlib import Path
 
 import httpx
@@ -10,6 +12,7 @@ from tools import smoke_remote
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = "https://ca-erechnung.example.azurecontainerapps.io"
+REAL_PROBE = smoke_remote.declared_length_probe  # the autouse fixture below replaces the module attribute
 JSON = {"content-type": "application/json"}
 
 
@@ -22,22 +25,32 @@ def fake_clock(monkeypatch):
     return now
 
 
-def _mock(router, *, ubl_status=200, too_large=None):
+@pytest.fixture(autouse=True)
+def declared(monkeypatch):
+    """Stub for the http.client probe: 413 above the limit, a wait (timeout) below it, as the real service behaves."""
+    results = {smoke_remote.OVER_LIMIT: 413, smoke_remote.UNDER_LIMIT: "error:TimeoutError"}
+    monkeypatch.setattr(
+        smoke_remote, "declared_length_probe", lambda base, key, length, timeout=10: results[length]
+    )
+    return results
+
+
+def _mock(router, *, ubl_status=200, too_large=None, after_reset=None):
     router.get(f"{BASE}/health").mock(
         side_effect=[
             httpx.Response(503, json={"status": "degraded"}),
             httpx.Response(200, json={"status": "ok"}),
-            httpx.Response(200, json={"status": "ok"}),  # health re-check after the oversize upload
         ]
     )
-    router.post(f"{BASE}/validate").mock(
-        side_effect=[
-            httpx.Response(401, json={"detail": "unauthorized"}),
-            httpx.Response(ubl_status, json={"gueltig": True}, headers=JSON),
-            httpx.Response(200, json={"gueltig": True}, headers=JSON),
-            too_large if too_large is not None else httpx.Response(413, json={"detail": "too large"}),
-        ]
-    )
+    posts = [
+        httpx.Response(401, json={"detail": "unauthorized"}),
+        httpx.Response(ubl_status, json={"gueltig": True}, headers=JSON),
+        httpx.Response(200, json={"gueltig": True}, headers=JSON),
+        too_large if too_large is not None else httpx.Response(413, json={"detail": "too large"}),
+    ]
+    if isinstance(too_large, Exception):  # the follow-up UBL call after a reset
+        posts.append(after_reset or httpx.Response(200, json={"gueltig": True}, headers=JSON))
+    router.post(f"{BASE}/validate").mock(side_effect=posts)
 
 
 def test_run_ok(fake_clock):
@@ -50,6 +63,9 @@ def test_run_ok(fake_clock):
     assert result["ubl"] == {"status": 200, "gueltig": True}
     assert result["pdf"] == {"status": 200, "gueltig": True}
     assert result["too_large"] == 413
+    assert result["declared_11mib"] == 413
+    assert result["declared_9mib"] == "error:TimeoutError"
+    assert result["after_reset"] is None
 
 
 def test_run_sends_key_only_on_authenticated_calls(fake_clock):
@@ -84,52 +100,167 @@ def test_run_reports_transport_error_as_status_zero(fake_clock):
     assert result["ok"] is False
 
 
-def test_run_accepts_reset_on_oversize_case_when_service_stays_healthy(fake_clock):
+def test_run_accepts_fast_reset_when_service_still_validates(fake_clock):
     with respx.mock() as router:
         _mock(router, too_large=httpx.WriteError("connection reset"))
         result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
-    assert result["too_large"] == "reset"
-    assert result["health_after"] == 200
+    assert result["too_large"] == "reset:WriteError"
+    assert result["after_reset"] == {"status": 200, "gueltig": True}
     assert result["ok"] is True
 
 
-def test_run_fails_on_reset_when_service_is_down_afterwards(fake_clock):
+def test_run_sends_valid_ubl_with_key_after_reset(fake_clock):
     with respx.mock() as router:
-        router.get(f"{BASE}/health").mock(
-            side_effect=[
-                httpx.Response(200, json={"status": "ok"}),
-                httpx.Response(503, json={"status": "degraded"}),
-            ]
-        )
-        router.post(f"{BASE}/validate").mock(
-            side_effect=[
-                httpx.Response(401),
-                httpx.Response(200, json={"gueltig": True}, headers=JSON),
-                httpx.Response(200, json={"gueltig": True}, headers=JSON),
-                httpx.WriteError("connection reset"),
-            ]
+        _mock(router, too_large=httpx.ReadError("reset"))
+        smoke_remote.run(BASE, "secret-key", ROOT / "fixtures")
+        posts = [c.request for c in router.calls if c.request.method == "POST"]
+    assert len(posts) == 5
+    assert posts[4].headers["x-api-key"] == "secret-key"
+    assert b"01.01a-INVOICE_ubl.xml" in posts[4].content[:400]
+
+
+def test_run_fails_on_reset_when_service_cannot_validate_afterwards(fake_clock):
+    with respx.mock() as router:
+        _mock(
+            router, too_large=httpx.WriteError("reset"), after_reset=httpx.Response(502, json={"detail": "x"})
         )
         result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
-    assert result["too_large"] == "reset"
-    assert result["health_after"] == 503
+    assert result["too_large"] == "reset:WriteError"
+    assert result["after_reset"] == {"status": 502, "gueltig": None}
     assert result["ok"] is False
 
 
+def test_run_fails_on_timeout_during_oversize_upload(fake_clock):
+    with respx.mock() as router:
+        _mock(router, too_large=httpx.ReadTimeout("hang"))
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == "error:ReadTimeout"
+    assert result["after_reset"] is None
+    assert result["ok"] is False
+
+
+def test_run_fails_on_connect_error_during_oversize_upload(fake_clock):
+    with respx.mock() as router:
+        _mock(router, too_large=httpx.ConnectError("refused"))
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == "error:ConnectError"
+    assert result["ok"] is False
+
+
+def test_run_fails_on_slow_reset(fake_clock):
+    def slow_reset(request):
+        fake_clock[0] += 30
+        raise httpx.ReadError("reset after 30 s")
+
+    with respx.mock() as router:
+        router.get(f"{BASE}/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+        outcomes = [
+            httpx.Response(401),
+            httpx.Response(200, json={"gueltig": True}, headers=JSON),
+            httpx.Response(200, json={"gueltig": True}, headers=JSON),
+            slow_reset,
+            httpx.Response(200, json={"gueltig": True}, headers=JSON),
+        ]
+        router.post(f"{BASE}/validate").mock(side_effect=lambda request: _next(outcomes, request))
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == "reset:ReadError"
+    assert result["too_large_seconds"] == 30.0
+    assert result["ok"] is False
+
+
+def _next(outcomes, request):
+    item = outcomes.pop(0)
+    return item(request) if callable(item) else item
+
+
+def test_run_fails_when_deterministic_probe_does_not_give_413(fake_clock, declared):
+    declared[smoke_remote.OVER_LIMIT] = "error:TimeoutError"
+    with respx.mock() as router:
+        _mock(router)
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["declared_11mib"] == "error:TimeoutError"
+    assert result["too_large"] == 413  # the real upload alone is not enough
+    assert result["ok"] is False
+
+
+def test_run_fails_when_probe_below_the_limit_also_gives_413(fake_clock, declared):
+    declared[smoke_remote.UNDER_LIMIT] = 413
+    with respx.mock() as router:
+        _mock(router)
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["ok"] is False
+
+
+RESET_OK = {"status": 200, "gueltig": True}
+
+
 @pytest.mark.parametrize(
-    ("too_large", "health_after", "expected"),
+    ("declared", "under", "too_large", "seconds", "after", "expected"),
     [
-        (413, 200, True),
-        (413, 0, True),  # the service answered; the later health call is not part of the rule
-        ("reset", 200, True),
-        ("reset", 503, False),
-        ("reset", 0, False),
-        (200, 200, False),  # the oversize file was accepted
-        (422, 200, False),
-        (0, 200, False),
+        (413, "error:TimeoutError", 413, 0.2, None, True),
+        (413, "error:TimeoutError", "reset:WriteError", 1.0, RESET_OK, True),
+        (413, 200, "reset:ReadError", 1.0, RESET_OK, True),
+        (413, "error:TimeoutError", "reset:RemoteProtocolError", 4.9, RESET_OK, True),
+        (413, "error:TimeoutError", "reset:ReadError", 5.0, RESET_OK, False),  # too slow
+        (413, "error:TimeoutError", "reset:ReadError", 1.0, None, False),  # no follow-up proof
+        (413, "error:TimeoutError", "reset:ReadError", 1.0, {"status": 200, "gueltig": False}, False),
+        (413, "error:TimeoutError", "reset:ReadError", 1.0, {"status": 0, "gueltig": None}, False),
+        (413, "error:TimeoutError", "error:ReadTimeout", 1.0, RESET_OK, False),
+        (413, "error:TimeoutError", "error:ConnectError", 0.1, RESET_OK, False),
+        (413, "error:TimeoutError", "reset:ConnectError", 0.1, RESET_OK, False),  # not a reset class
+        (413, "error:TimeoutError", 200, 1.0, None, False),  # the oversize file was accepted
+        (413, "error:TimeoutError", 422, 1.0, None, False),
+        (413, "error:TimeoutError", "reset", 1.0, RESET_OK, False),  # old label without the class
+        ("error:TimeoutError", "error:TimeoutError", 413, 0.2, None, False),
+        (200, "error:TimeoutError", 413, 0.2, None, False),
+        (413, 413, 413, 0.2, None, False),  # the limit is not size dependent
     ],
 )
-def test_oversize_rule(too_large, health_after, expected):
-    assert smoke_remote.oversize_rejected(too_large, health_after) is expected
+def test_oversize_rule(declared, under, too_large, seconds, after, expected):
+    assert smoke_remote.oversize_rejected(declared, under, too_large, seconds, after) is expected
+
+
+class _Handler(http.server.BaseHTTPRequestHandler):
+    """413 for a declared length over 10 MiB, otherwise wait for the body that never comes (like the guard)."""
+
+    def do_POST(self):  # noqa: N802
+        n = int(self.headers["Content-Length"])
+        self.server.seen.append((self.path, self.headers.get("X-Api-Key"), n))
+        if n > 10 * 1024 * 1024 + 65536:
+            self.send_response(413)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self.rfile.read(n)  # blocks until the client gives up
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def local_service():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    server.seen = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", server
+    server.shutdown()
+    server.server_close()
+
+
+def test_declared_length_probe_gets_413_without_a_body(local_service):
+    base, server = local_service
+    assert REAL_PROBE(base, "the-key", smoke_remote.OVER_LIMIT) == 413
+    assert server.seen == [("/validate", "the-key", smoke_remote.OVER_LIMIT)]
+
+
+def test_declared_length_probe_below_limit_times_out(local_service):
+    base, _ = local_service
+    assert REAL_PROBE(base, "k", smoke_remote.UNDER_LIMIT, timeout=0.5) == "error:TimeoutError"
+
+
+def test_declared_length_probe_reports_connection_error():
+    assert REAL_PROBE("http://127.0.0.1:9", "k", 1, timeout=1).startswith("error:")
 
 
 def test_run_fails_on_wrong_oversize_status(fake_clock):
