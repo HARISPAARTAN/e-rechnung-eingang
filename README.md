@@ -105,6 +105,27 @@ Unit-Tests (Erkennung, PDF-Anhang, Syntax, Extraktion mit festen Sollwerten, Arc
 API-Tests mit gestubbtem Validator, Integrationstests gegen den Daemon, Image-Build mit Smoke-Test (401 ohne Schlüssel,
 XRechnung und ZUGFeRD-PDF gültig). GitHub Actions führt alle drei Stufen aus.
 
+## Betrieb auf Azure
+
+Der Dienst läuft als Azure Container App (`ca-erechnung`, Region `germanywestcentral`, 1 vCPU und 2 GiB, 0 bis 1
+Replik). Einrichtung und Betrieb stehen im Runbook [deploy/README.md](deploy/README.md).
+
+### Kaltstart und Kontingent
+
+Gemessen am 2026-10-25 (Rechner in Deutschland, Revision `ca-erechnung--0000001`):
+
+- **Kaltstart** nach Skalierung auf null: **22,6 s** bis `/health` mit 200 antwortet (Image-Pull 5 s, Container und
+  Validator-Daemon bis uvicorn rund 9 s; der Test fragt alle 5 s, der wahre Wert liegt bei 18 bis 23 s). Eine Replik
+  wird nach 300 s ohne Anfrage abgeschaltet.
+- **Warm:** `/health` in 0,1 s, `/validate` in 0,1 bis 0,3 s.
+- **Kontingent:** Die Gratiskontingente (180.000 vCPU-s, 360.000 GiB-s, 2 Millionen Anfragen im Monat) reichen als
+  Obergrenze für rund 545 Sitzungen im Monat zu je 330 Replik-Sekunden (Kaltstart plus 300 s Wartezeit bis zur
+  Abschaltung). Eine Demo mit 30 Sitzungen und 500 Prüfungen braucht rund 9.900 vCPU-s und 19.800 GiB-s, also
+  rund 5,5 Prozent. Eine dauerhaft laufende Replik käme auf das 14-Fache des Kontingents.
+- **Übergroße Uploads:** Der Dienst antwortet über 10 MB mit 413. `curl` und der GitHub-Runner sehen das 413; ein
+  Python-Client unter Windows kann statt der Antwort einen Verbindungsabbruch sehen, weil der Ingress die Verbindung
+  schließt, während noch geschrieben wird. Clients sollten beide Fälle als abgelehnt behandeln.
+
 ## Entscheidungen und Grenzen
 
 Siehe `docs/decisions/` (KoSIT-Validator, Dataverse-Eingang, Azure Container Apps, keine KI-Extraktion) und

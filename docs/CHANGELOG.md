@@ -1,5 +1,18 @@
 # Changelog
 
+## M2 Betrieb: erste Azure-Bereitstellung (2026-10-25)
+
+- Erstbereitstellung mit `deploy/azure.sh v0.2.0-rc1` in `rg-erechnung` (`germanywestcentral`), Container App
+  `ca-erechnung`, Revisionen `ca-erechnung--hbq4h1u` (rc1) und `ca-erechnung--0000001` (rc2). GHCR-Paket öffentlich, der Pull
+  brauchte keine Zugangsdaten.
+- Kaltstart nach Skalierung auf null 22,6 s (Image-Pull 5,0 s, uvicorn 9 s nach Containerstart), warm `/health` 0,1 s und
+  `/validate` 0,1 bis 0,3 s. Startup-, Liveness- und Readiness-Probe liefern 200, kein `ProbeFailed`, Revision `Healthy`.
+- Gratiskontingent: rund 330 Replik-Sekunden je Sitzung, eine Demo mit 30 Sitzungen und 500 Prüfungen kostet rund 5,5
+  Prozent der Kontingente (Rechnung im Runbook).
+- Übergroße Uploads: Der Dienst antwortet über 10 MB mit 413 (`curl` und der Linux-Runner sehen es); Python/`httpx` unter
+  Windows sieht einen Verbindungsabbruch. `tools/smoke_remote.py` erwartet 413 und akzeptiert den Abbruch nur, wenn
+  `/health` danach 200 meldet.
+
 ## v0.1.1 (2026-10-25) Härtung nach Review
 
 - Betrieb (vor Meilenstein 2): `/health` antwortet 503, wenn der Daemon ausfällt, und meldet `auth`; tini als PID 1,

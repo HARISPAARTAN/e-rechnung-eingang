@@ -105,6 +105,27 @@ Unit tests (detection, PDF attachment, syntax, extraction against fixed golden v
 pins), API tests with a stubbed validator, integration tests against the daemon, image build with a smoke test (401
 without key, XRechnung and ZUGFeRD PDF valid). GitHub Actions runs all three stages.
 
+## Operation on Azure
+
+The service runs as an Azure Container App (`ca-erechnung`, region `germanywestcentral`, 1 vCPU and 2 GiB, 0 to 1
+replica). Setup and operation are described in the runbook [deploy/README.md](deploy/README.md) (in German).
+
+### Cold start and free grant
+
+Measured on 2026-10-25 (machine in Germany, revision `ca-erechnung--0000001`):
+
+- **Cold start** after scale-to-zero: **22.6 s** until `/health` answers 200 (image pull 5 s, container and validator
+  daemon up to uvicorn about 9 s; the test polls every 5 s, so the true value is 18 to 23 s). A replica is shut down
+  after 300 s without requests.
+- **Warm:** `/health` in 0.1 s, `/validate` in 0.1 to 0.3 s.
+- **Grant:** the free monthly grants (180,000 vCPU-s, 360,000 GiB-s, 2 million requests) allow, as an upper bound,
+  about 545 sessions a month at 330 replica-seconds each (cold start plus 300 s wait before shutdown). A demo with
+  30 sessions and 500 checks needs about 9,900 vCPU-s and 19,800 GiB-s, roughly 5.5 percent. A replica that never
+  scaled down would use 14 times the grant.
+- **Oversized uploads:** the service answers 413 above 10 MB. `curl` and the GitHub runner see the 413; a Python
+  client on Windows can see a connection reset instead of the response, because the ingress closes the connection
+  while the client is still writing. Clients should treat both as rejected.
+
 ## Decisions and limits
 
 See `docs/decisions/` (KoSIT validator, Dataverse intake, Azure Container Apps, no AI extraction; in German) and
