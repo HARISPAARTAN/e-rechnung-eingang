@@ -16,7 +16,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 OUT = Path(__file__).resolve().parents[1] / "fixtures" / "zugferd" / "synthetisch"
-GUIDELINE = "urn:cen.eu:en16931:2017#compliant#urn:factur-x.eu:1p0:en16931"
+# Factur-X / ZUGFeRD 2.x profile EN 16931 (COMFORT) uses the bare EN identifier; the KoSIT scenario "EN16931 (CII)" matches exactly this.
+GUIDELINE = "urn:cen.eu:en16931:2017"
 
 SPECS = [
     {

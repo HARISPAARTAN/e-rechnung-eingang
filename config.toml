@@ -1,8 +1,8 @@
 [validator]
 version = "1.6.3"
-jar_sha256 = "pending"
+jar_sha256 = "799e64befca97d4080e03608c80b85dd5a5ecc5f4ae4f35d1116ec2855b9a7c9"
 config_release = "2026-08-31"
-config_sha256 = "pending"
+config_sha256 = "2530cd107c414511c5d0462ec10f886910395abfca820db82e83d70bf01221a8"
 xrechnung_version = "3.0.2"
 daemon_port = 8081
 timeout_s = 60
