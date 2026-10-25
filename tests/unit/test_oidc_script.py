@@ -66,6 +66,7 @@ def env(tmp_path):
         d.mkdir()
     for name, body in (("az", AZ_STUB), ("gh", GH_STUB)):
         (stubs / name).write_text(body, encoding="utf-8", newline="\n")
+        (stubs / name).chmod(0o755)  # Linux needs the execute bit (Windows ignores it)
     return {"stubs": stubs, "state": state, "work": work}
 
 
