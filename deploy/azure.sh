@@ -7,11 +7,11 @@ TAG="${1:?image tag, e.g. v0.2.0}"
 RG="${RG:-rg-erechnung}"; LOC="${LOC:-germanywestcentral}"; IMAGE="ghcr.io/harispaartan/e-rechnung-eingang:${TAG}"
 KEYFILE="deploy/.secrets/ere_api_key"
 SECRETPARAMS="deploy/.secrets/secure.parameters.json"
+umask 077  # key and parameter files are readable by the owner only
 mkdir -p deploy/.secrets
 if [ ! -s "$KEYFILE" ]; then openssl rand -hex 32 > "$KEYFILE"; echo "API-Schlüssel erzeugt in $KEYFILE (nicht teilen)"; fi
 # The key goes to Azure through a git-ignored parameter file, not through the command line.
 trap 'rm -f "$SECRETPARAMS"' EXIT
-umask 077
 printf '{"$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#","contentVersion":"1.0.0.0","parameters":{"apiKey":{"value":"%s"}}}\n' \
   "$(tr -d '\r\n' < "$KEYFILE")" > "$SECRETPARAMS"
 az group create --name "$RG" --location "$LOC" --output none

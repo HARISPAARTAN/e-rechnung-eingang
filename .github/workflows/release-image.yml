@@ -27,6 +27,9 @@ jobs:
     needs: image
     runs-on: ubuntu-24.04
     environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
@@ -38,9 +41,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Update container app
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           az extension add --name containerapp --only-show-errors
-          az containerapp update --name ca-erechnung --resource-group rg-erechnung --image "ghcr.io/harispaartan/e-rechnung-eingang:${{ github.ref_name }}" --output none
+          az containerapp update --name ca-erechnung --resource-group rg-erechnung --image "ghcr.io/harispaartan/e-rechnung-eingang:${TAG}" --output none
       - name: Public URL
         id: url
         run: echo "fqdn=$(az containerapp show --name ca-erechnung --resource-group rg-erechnung --query properties.configuration.ingress.fqdn -o tsv)" >> "$GITHUB_OUTPUT"
@@ -49,7 +54,8 @@ jobs:
       - name: Smoke test
         env:
           ERE_API_KEY: ${{ secrets.ERE_API_KEY }}
-        run: uv run python tools/smoke_remote.py --base-url "https://${{ steps.url.outputs.fqdn }}" --key-env ERE_API_KEY --junit smoke.xml
+          FQDN: ${{ steps.url.outputs.fqdn }}
+        run: uv run python tools/smoke_remote.py --base-url "https://${FQDN}" --key-env ERE_API_KEY --junit smoke.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: smoke, path: smoke.xml, if-no-files-found: ignore }

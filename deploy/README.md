@@ -28,6 +28,9 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
    `uv run python tools/smoke_remote.py --base-url https://<fqdn>`
    (liest den Schlüssel aus `deploy/.secrets/ere_api_key`; prüft Health, 401 ohne Schlüssel, gültige XRechnung und gültiges
    ZUGFeRD-PDF, 413 über 10 MB).
+   *Erst live prüfbar:* Der 413-Fall sendet 11 MiB; manche Ingress-Stacks trennen die Verbindung, während noch geschrieben
+   wird. Dann steht `"too_large": "reset"` in der Ausgabe statt 413. Das wird beim ersten echten Lauf geprüft, bevor ein
+   Release-Tag gesetzt wird.
 7. Automatische Bereitstellung per GitHub Actions (ohne gespeicherte Azure-Passwörter, nur OIDC):
    1. `deploy/github-oidc.sh` ausführen (nach Schritt 5, die Ressourcengruppe muss existieren). Es legt die Entra-App
       `erechnung-github-deploy` mit Federated Credential für die GitHub-Umgebung `production` an, gibt ihr Contributor nur auf
@@ -43,11 +46,18 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
 
 - **Leerlauf nach 90 Tagen:** Azure löscht Container-Apps-Umgebungen, die lange unbenutzt sind. Der Workflow `keepalive`
   ruft am 1. jedes Monats `/health` auf und schreibt die Kaltstartzeit ins Log; er läuft auch manuell (Actions >
-  keepalive > Run workflow). Ist die Umgebung trotzdem weg: `deploy/azure.sh <tag>` stellt alles neu bereit (der Schlüssel
+  keepalive > Run workflow). `ERE_BASE_URL` darf mit oder ohne abschließenden Schrägstrich gespeichert werden. GitHub
+  deaktiviert geplante Workflows nach 60 Tagen ohne Repository-Aktivität; dann genügt ein Commit oder ein manueller Lauf,
+  um sie wieder zu aktivieren. Ist die Umgebung trotzdem weg: `deploy/azure.sh <tag>` stellt alles neu bereit (der Schlüssel
   bleibt gleich, die URL ändert sich eventuell; dann `ERE_BASE_URL` aktualisieren).
 - **Schlüssel rotieren:** `deploy/.secrets/ere_api_key` löschen, `deploy/azure.sh <aktueller-tag>` erneut ausführen (erzeugt
   einen neuen Schlüssel und ersetzt das Container-App-Secret `api-key`), danach das GitHub-Secret `ERE_API_KEY` in der
   Umgebung `production` aktualisieren und (ab Meilenstein 3) die Dataverse-Umgebungsvariable mit dem neuen Schlüssel.
+  **Wichtig:** Ein geändertes Secret startet eine laufende Revision nicht neu. Bis zum Neustart akzeptiert der Dienst noch
+  den alten Schlüssel. Deshalb direkt nach dem Skript die aktive Revision neu starten:
+  `REV=$(az containerapp revision list --name ca-erechnung --resource-group rg-erechnung --query "[?properties.active].name | [0]" -o tsv)`
+  und `az containerapp revision restart --name ca-erechnung --resource-group rg-erechnung --revision "$REV"`.
+  Danach mit `uv run python tools/smoke_remote.py --base-url https://<fqdn>` prüfen, dass der neue Schlüssel gilt.
 - **Logs:** Portal > `ca-erechnung` > Log stream, oder Log Analytics `law-erechnung` (30 Tage Aufbewahrung).
 - **Abbauen:** `az group delete --name rg-erechnung` entfernt alles.
 

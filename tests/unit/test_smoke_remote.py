@@ -17,12 +17,12 @@ JSON = {"content-type": "application/json"}
 def fake_clock(monkeypatch):
     """Replace the clock: sleeping advances it, so the measured cold start is deterministic."""
     now = [1000.0]
-    monkeypatch.setattr(smoke_remote.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(smoke_remote.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+    monkeypatch.setattr(smoke_remote, "_monotonic", lambda: now[0])
+    monkeypatch.setattr(smoke_remote, "_sleep", lambda s: now.__setitem__(0, now[0] + s))
     return now
 
 
-def _mock(router, *, ubl_status=200):
+def _mock(router, *, ubl_status=200, too_large=None):
     router.get(f"{BASE}/health").mock(
         side_effect=[
             httpx.Response(503, json={"status": "degraded"}),
@@ -34,7 +34,7 @@ def _mock(router, *, ubl_status=200):
             httpx.Response(401, json={"detail": "unauthorized"}),
             httpx.Response(ubl_status, json={"gueltig": True}, headers=JSON),
             httpx.Response(200, json={"gueltig": True}, headers=JSON),
-            httpx.Response(413, json={"detail": "too large"}),
+            too_large if too_large is not None else httpx.Response(413, json={"detail": "too large"}),
         ]
     )
 
@@ -65,6 +65,54 @@ def test_run_fails_on_server_error(fake_clock):
         result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
     assert result["ok"] is False
     assert result["ubl"]["status"] == 500
+
+
+def test_run_reports_transport_error_as_status_zero(fake_clock):
+    with respx.mock() as router:
+        router.get(f"{BASE}/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+        router.post(f"{BASE}/validate").mock(
+            side_effect=[
+                httpx.Response(401),
+                httpx.ConnectError("refused"),
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.Response(413),
+            ]
+        )
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["ubl"] == {"status": 0, "gueltig": None}
+    assert result["ok"] is False
+
+
+def test_run_reports_reset_on_oversize_case(fake_clock):
+    with respx.mock() as router:
+        _mock(router, too_large=httpx.WriteError("connection reset"))
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == "reset"
+    assert result["ok"] is False
+
+
+def test_run_fails_on_wrong_oversize_status(fake_clock):
+    with respx.mock() as router:
+        _mock(router, too_large=httpx.Response(200, json={"gueltig": True}, headers=JSON))
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["too_large"] == 200
+    assert result["ok"] is False
+
+
+def test_run_fails_when_call_without_key_is_accepted(fake_clock):
+    with respx.mock() as router:
+        router.get(f"{BASE}/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+        router.post(f"{BASE}/validate").mock(
+            side_effect=[
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.Response(200, json={"gueltig": True}, headers=JSON),
+                httpx.Response(413),
+            ]
+        )
+        result = smoke_remote.run(BASE, "k", ROOT / "fixtures")
+    assert result["no_key"] == 200
+    assert result["ok"] is False
 
 
 def test_run_times_out_when_never_healthy(fake_clock):

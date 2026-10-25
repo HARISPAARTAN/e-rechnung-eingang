@@ -1,6 +1,6 @@
 name: keepalive
 # Azure deletes idle Container Apps environments after 90 days. One health call a month prevents that and
-# records the cold-start time in the job log. Needs the repository variable ERE_BASE_URL (https://<fqdn>).
+# records the cold-start time in the job log. Needs the repository variable ERE_BASE_URL (https://<fqdn>, a trailing slash is tolerated).
 on:
   schedule:
     - cron: '17 6 1 * *'
@@ -19,9 +19,10 @@ jobs:
             echo "::notice::Repository variable ERE_BASE_URL is not set; nothing to ping yet."
             exit 0
           fi
+          BASE="${ERE_BASE_URL%/}"
           for attempt in 1 2 3; do
             start=$(date +%s)
-            if curl -fsS --max-time 120 "$ERE_BASE_URL/health"; then
+            if curl -fsS --max-time 120 "$BASE/health"; then
               echo
               echo "Health OK on attempt $attempt after $(( $(date +%s) - start )) s (cold start included)"
               exit 0

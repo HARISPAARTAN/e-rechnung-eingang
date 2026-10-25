@@ -1,4 +1,10 @@
-"""Remote smoke test against a deployed service: health (with cold-start timing), 401 without key, valid UBL and PDF, 413."""
+"""Remote smoke test against a deployed service: health (with cold-start timing), 401 without key, valid UBL and PDF, 413.
+
+Erst live prüfbar: the 413 case sends an 11 MiB body that the service rejects from the declared Content-Length.
+Some ingress stacks close the connection while the client is still writing; the result then shows
+``"too_large": "reset"`` instead of 413 and the run counts as failed. Task 3 checks this against the real service
+before a release is tagged.
+"""
 
 from __future__ import annotations
 
@@ -19,20 +25,28 @@ PDF = Path("zugferd") / "synthetisch" / "nordstern-elbnetz-RE-2026-0042.pdf"
 MAX_UPLOAD = 10 * 1024 * 1024
 
 
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
 def wait_healthy(client: httpx.Client, base: str, timeout_s: float = 300) -> tuple[int, float]:
     """Poll /health until it answers 200 with status ok (a cold start can take minutes)."""
-    start = time.monotonic()
+    start = _monotonic()
     last = 0
-    while time.monotonic() - start < timeout_s:
+    while _monotonic() - start < timeout_s:
         try:
             r = client.get(f"{base}/health", timeout=30)
             last = r.status_code
             if r.status_code == 200 and r.json().get("status") == "ok":
-                return r.status_code, time.monotonic() - start
+                return r.status_code, _monotonic() - start
         except (httpx.HTTPError, ValueError):
             last = 0
-        time.sleep(5)
-    return last, time.monotonic() - start
+        _sleep(5)
+    return last, _monotonic() - start
 
 
 def _verdict(r: httpx.Response) -> dict:
@@ -66,7 +80,7 @@ def run(base_url: str, api_key: str, fixtures_dir: Path | str = FIXTURES, health
         out["pdf"] = _verdict(r) if r is not None else {"status": 0, "gueltig": None}
         big = b"<a>" + b"x" * (MAX_UPLOAD + 1024 * 1024) + b"</a>"
         r = _post(c, url, "big.xml", big, "application/xml", api_key)
-        out["too_large"] = r.status_code if r is not None else 0
+        out["too_large"] = r.status_code if r is not None else "reset"  # transport error, e.g. connection reset mid-upload
     out["ok"] = (
         out["health"]["status"] == 200
         and out["no_key"] == 401

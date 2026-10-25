@@ -77,9 +77,14 @@ def test_scale_to_zero(arm, app):
     assert _param(arm, app["properties"]["template"]["scale"]["minReplicas"]) == 0
 
 
+def test_max_replicas_is_one(arm, app):
+    assert _param(arm, app["properties"]["template"]["scale"]["maxReplicas"]) == 1
+
+
 def test_resources(container):
     resources = container["resources"]
-    assert resources["cpu"] == "[json('1.0')]"  # cpu is a decimal; Bicep compiles json('1.0') this way
+    # Bicep compiles json('1.0') to this expression; a newer compiler may emit a plain number
+    assert resources["cpu"] in ("[json('1.0')]", 1, 1.0)
     assert resources["memory"] == "2Gi"
 
 
