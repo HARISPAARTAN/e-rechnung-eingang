@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0 (2026-10-25, in Vorbereitung) Meilenstein 2 Betrieb auf Azure Container Apps
+
+- Bereitstellung: `deploy/containerapp.bicep` (Verbrauchsplan, 1 vCPU und 2 GiB, Replikate 0 bis 1, Secret `api-key`, Startup-,
+  Liveness- und Readiness-Probe auf `/health`), Owner-Skripte `deploy/azure.sh` und `deploy/github-oidc.sh` (zwei
+  Federated Credentials wegen der beiden Subject-Formen von GitHub), Runbook `deploy/README.md`.
+- Workflows: `release` baut und veröffentlicht das Image auf GHCR und aktualisiert die Container App per OIDC, danach
+  Smoke-Test gegen die Live-URL (`tools/smoke_remote.py`, Artefakt `smoke.xml`); `keepalive` ruft monatlich `/health` auf.
+- Smoke-Test: erwartet 413 bei Upload über 10 MB; ein Verbindungsabbruch zählt nur bei danach gesundem `/health` (Windows-Clients
+  sehen den Abbruch, `curl` und der Linux-Runner das 413).
+- Gemessen: Kaltstart 22,6 s, warm 0,1 s (siehe "M2 Betrieb" unten und README "Betrieb auf Azure").
+- Versionen: Paket und Dienst 0.2.0. Tag `v0.2.0` folgt nach grünem CI und Prüfung.
+
 ## M2 Betrieb: erste Azure-Bereitstellung (2026-10-25)
 
 - Erstbereitstellung mit `deploy/azure.sh v0.2.0-rc1` in `rg-erechnung` (`germanywestcentral`), Container App

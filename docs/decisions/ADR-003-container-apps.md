@@ -30,3 +30,31 @@ Der Kaltstart (Container plus Daemon-Start) wird in Kauf genommen.
   Container mit einem Fehlercode, damit die Plattform ihn neu startet.
 - Anfragegröße: Schlüssel und `Content-Length` werden vor dem Lesen des Inhalts geprüft, gestreamte Uploads werden
   mitgezählt und über 10 MB mit 413 abgebrochen. Eine Grenze am Ingress ist damit nicht nötig.
+
+### Umsetzung in Meilenstein 2 (2026-10-25)
+
+- Probes (`deploy/containerapp.bicep`, alle HTTP `GET /health` auf Port 8080; Azure wertet 200 bis 399 als Erfolg, das
+  503 eines ausgefallenen Daemons gilt also als Fehlschlag):
+  - Startup: 10 s Anfangsverzögerung, Periode 5 s, Timeout 3 s, Fehlerschwelle 36, also bis zu rund 190 s Zeit für
+    Container und Daemon-Start, bevor die Revision als gescheitert gilt.
+  - Liveness: Periode 30 s, Timeout 5 s, Fehlerschwelle 3. Erst drei Fehlschläge in Folge (rund 90 s) starten den
+    Container neu; ein einzelnes langsames `/health` bei einer schweren Validierung bleibt folgenlos.
+  - Readiness: Periode 10 s, Timeout 5 s, Fehlerschwelle 3. Ein Replikat ohne laufenden Daemon bekommt keinen Verkehr.
+- Ressourcen: 1 vCPU und 2 GiB, Replikate min 0 und max 1 (kein Zustand im Container, eine Replik reicht für die
+  Demo-Last und hält den Verbrauch klein).
+- Image-Registry: GHCR statt Azure Container Registry. Das Paket
+  `ghcr.io/harispaartan/e-rechnung-eingang` ist öffentlich, Azure zieht es ohne hinterlegte Zugangsdaten; eine ACR
+  würde Grundkosten erzeugen und ein Pull-Secret verlangen. Das Image enthält keine Geheimnisse (der Schlüssel kommt als
+  Container-App-Secret `api-key`). Fallback bei Pull-Problemen: `az containerapp registry set` mit einem GitHub-Token
+  mit `read:packages`.
+- Der Schlüssel liegt nur als Container-App-Secret und, für den Smoke-Test, als GitHub-Umgebungs-Secret
+  `ERE_API_KEY`; die Bereitstellung aus GitHub läuft über OIDC (Federated Credentials auf die Umgebung `production`,
+  Contributor nur auf die Ressourcengruppe), es gibt kein gespeichertes Azure-Passwort. Entra vergleicht das Subject
+  exakt und unterstützt keine Platzhalter; GitHub stellte es beim ersten Deploy mit numerischen IDs aus
+  (`repo:HARISPAARTAN@<Owner-ID>/e-rechnung-eingang@<Repo-ID>:environment:production`, Fehler `AADSTS700213`). Darum gibt es
+  zwei Credentials, `github-production` (Namen) und `github-production-ids` (IDs); `deploy/github-oidc.sh` legt beide an.
+- Gemessen (2026-10-25): Kaltstart 22,6 s, warmes `/health` 0,1 s, Image-Pull 5 s; die Probes lieferten 200, kein
+  `ProbeFailed`. Zahlen und Kontingentrechnung stehen im Runbook und in der README.
+- Übergroße Uploads: Der Dienst antwortet 413; der Ingress trennt danach die Verbindung. Clients, die den ganzen Körper vor dem
+  Lesen schreiben (`httpx` unter Windows), sehen einen Abbruch statt der Antwort. Der Smoke-Test wertet beides als abgelehnt,
+  den Abbruch nur bei danach gesundem `/health`.

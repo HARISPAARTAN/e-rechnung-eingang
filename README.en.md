@@ -4,9 +4,10 @@
 
 Validation service and intake workflow for electronic invoices in Germany. German version: [README.md](README.md).
 
-**Status:** Milestone 1 is done: the validation service (Docker) validates XRechnung XML and ZUGFeRD PDFs with the
-KoSIT validator, extracts the EN 16931 invoice fields and proposes an archive name. Milestones 2 to 4
-(Azure hosting, Dataverse with Power Automate, Power BI page) follow.
+**Status:** Milestones 1 and 2 are done: the validation service (Docker) validates XRechnung XML and ZUGFeRD PDFs with the
+KoSIT validator, extracts the EN 16931 invoice fields and proposes an archive name, and it runs on Azure Container Apps
+(see [Operation on Azure](#operation-on-azure)). Milestones 3 and 4 (Dataverse with Power Automate, Power BI page)
+follow.
 
 ## Why
 
@@ -108,7 +109,41 @@ without key, XRechnung and ZUGFeRD PDF valid). GitHub Actions runs all three sta
 ## Operation on Azure
 
 The service runs as an Azure Container App (`ca-erechnung`, region `germanywestcentral`, 1 vCPU and 2 GiB, 0 to 1
-replica). Setup and operation are described in the runbook [deploy/README.md](deploy/README.md) (in German).
+replica). Setup and operation are described in the runbook [deploy/README.md](deploy/README.md) (in German). The public HTTPS
+endpoint is https://ca-erechnung.icyriver-dc3b68c8.germanywestcentral.azurecontainerapps.io.
+
+### Calling it
+
+```bash
+curl https://ca-erechnung.icyriver-dc3b68c8.germanywestcentral.azurecontainerapps.io/health
+curl -H "X-Api-Key: $ERE_API_KEY" -F "file=@invoice.xml" https://ca-erechnung.icyriver-dc3b68c8.germanywestcentral.azurecontainerapps.io/validate
+```
+
+`/health` is open, `/validate` needs the `X-Api-Key` header. The key is a secret of the container app (`api-key`) and
+lives locally in the git-ignored file `deploy/.secrets/ere_api_key`; it is in no repository. After an idle period the
+first answer waits for the cold start (see below), so clients should use a timeout of at least 60 s for the first call
+and retry on 502 or 503.
+
+### Deployment and probes
+
+- **Deployment:** a tag `v*` starts the `release` workflow: it builds the image and publishes it publicly as
+  `ghcr.io/harispaartan/e-rechnung-eingang:<tag>`. The `deploy` job signs in to Azure with OIDC (no stored Azure
+  password; environment `production`), sets the new image on the container app and runs `tools/smoke_remote.py`
+  against the live URL (health, 401 without key, valid XRechnung and ZUGFeRD PDF, upload over 10 MB); the result is
+  attached to the run as the `smoke.xml` artifact. The owner does the first deployment and the access setup with
+  `deploy/azure.sh` and `deploy/github-oidc.sh`.
+- **OIDC subjects:** GitHub issues the subject of the environment in two forms and Entra compares it exactly, so the
+  script creates two federated credentials: `repo:HARISPAARTAN/e-rechnung-eingang:environment:production` and
+  `repo:HARISPAARTAN@<owner id>/e-rechnung-eingang@<repo id>:environment:production`. If one is missing, the login fails
+  with `AADSTS700213` and names the expected value.
+- **Probes:** all three call `GET /health` on port 8080; 200 to 399 counts as success. `/health` answers 503 when the
+  validator daemon does not respond, which makes every probe fail. Startup: up to about 190 s for the start (threshold
+  36 times 5 s). Readiness: after 3 failures 10 s apart the replica receives no traffic. Liveness: after 3 failures
+  30 s apart the container is restarted.
+- **Keep-alive:** Azure deletes environments after 90 days of idleness. The `keepalive` workflow calls `/health` on the
+  1st of every month (variable `ERE_BASE_URL`) and logs the cold-start time; it can also be started by hand.
+- **Key rotation:** delete the file, run `deploy/azure.sh <tag>` again, restart the active revision (a changed secret
+  alone does not change a running replica), update the GitHub secret `ERE_API_KEY`. Details in the runbook.
 
 ### Cold start and free grant
 
