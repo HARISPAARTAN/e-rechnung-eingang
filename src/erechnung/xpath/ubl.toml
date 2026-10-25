@@ -9,6 +9,6 @@ verkaeufer_ust_idnr = "cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme[
 kaeufer_name = "cac:AccountingCustomerParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName | cac:AccountingCustomerParty/cac:Party/cac:PartyName/cbc:Name[not(normalize-space(../../cac:PartyLegalEntity/cbc:RegistrationName))]"
 iban = "cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID"
 netto = "cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount"
-steuer = "cac:TaxTotal/cbc:TaxAmount"
+steuer = "cac:TaxTotal/cbc:TaxAmount[@currencyID = ../../cbc:DocumentCurrencyCode]"
 brutto = "cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount"
 faelliger_betrag = "cac:LegalMonetaryTotal/cbc:PayableAmount"

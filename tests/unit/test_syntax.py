@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-from lxml import etree
 
 from erechnung.pdf import extract_embedded_xml
 from erechnung.syntax import (
@@ -67,6 +66,28 @@ def test_parser_refuses_external_entities(tmp_path):
     evil = (
         '<?xml version="1.0"?><!DOCTYPE a [<!ENTITY x SYSTEM "' + secret.as_uri() + '">]><a>&x;</a>'
     ).encode("utf-8")
-    root = parse_xml(evil)
-    assert b"GEHEIM-4711" not in etree.tostring(root)
-    assert (root.text or "") == ""
+    with pytest.raises(MalformedXml, match="DOCTYPE ist nicht erlaubt") as info:
+        parse_xml(evil)
+    assert "GEHEIM-4711" not in str(info.value)
+
+
+def test_internal_entity_is_refused_not_truncated():
+    with pytest.raises(MalformedXml, match="DOCTYPE ist nicht erlaubt"):
+        parse_xml(b'<?xml version="1.0"?><!DOCTYPE a [<!ENTITY n "42">]><a>RE-&n;-1</a>')
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        b"<!DOCTYPE a><a/>",
+        b'\xef\xbb\xbf<?xml version="1.0"?>\n<!-- c --><!DOCTYPE a SYSTEM "a.dtd"><a/>',
+        '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE a><a/>'.encode("utf-16"),
+    ],
+)
+def test_any_doctype_is_refused(doc):
+    with pytest.raises(MalformedXml, match="DOCTYPE"):
+        parse_xml(doc)
+
+
+def test_plain_document_still_parses():
+    assert parse_xml(b'\xef\xbb\xbf<?xml version="1.0"?><a>RE-1</a>').text == "RE-1"

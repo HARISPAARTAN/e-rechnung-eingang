@@ -15,7 +15,9 @@ NS = {
     "ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100",
     "udt": "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100",
 }
-_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False, remove_blank_text=False)
+_PARSER = etree.XMLParser(
+    resolve_entities=False, load_dtd=False, no_network=True, huge_tree=False, remove_blank_text=False
+)
 
 
 class Syntax(StrEnum):
@@ -32,10 +34,16 @@ class UnsupportedSyntax(ValueError):
 
 
 def parse_xml(data: bytes) -> etree._Element:
+    """Parse without entities, DTDs or network; any DOCTYPE is refused (e-invoices have none, KoSIT rejects them,
+    and an unresolved internal entity would silently truncate a field)."""
     try:
-        return etree.fromstring(data, parser=_PARSER)
+        root = etree.fromstring(data, parser=_PARSER)
     except etree.XMLSyntaxError as exc:
         raise MalformedXml(f"XML nicht wohlgeformt: {exc}") from exc
+    docinfo = root.getroottree().docinfo
+    if docinfo.doctype or docinfo.internalDTD is not None or docinfo.externalDTD is not None:
+        raise MalformedXml("DOCTYPE ist nicht erlaubt")
+    return root
 
 
 def detect_syntax(root: etree._Element) -> Syntax:
