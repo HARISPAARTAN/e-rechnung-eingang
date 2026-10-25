@@ -1,0 +1,9 @@
+services:
+  erechnung:
+    build: .
+    image: erechnung-eingang:local
+    container_name: ere-service
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ERE_API_KEY: "${ERE_API_KEY:-}"

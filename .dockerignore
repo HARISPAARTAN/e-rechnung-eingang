@@ -1,0 +1,8 @@
+.venv
+.git
+.validator
+fixtures/_downloads
+tests
+docs
+build
+dist

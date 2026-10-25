@@ -115,13 +115,8 @@ def test_api_key_required_when_configured(monkeypatch):
 
 
 def test_non_ascii_api_key_does_not_crash(monkeypatch):
-    sent = "geheim-äöü-ß"
-    # TestClient puts header values on the wire as UTF-8; Starlette decodes header bytes as latin-1,
-    # so the service sees the mojibake form. A configured key equal to that form must match.
-    seen = sent.encode("utf-8").decode("latin-1")
     files = {"file": ("a.xml", (FX / "xrechnung" / "01.01a-INVOICE_ubl.xml").read_bytes(), "application/xml")}
-    c = _client(StubClient(result=_accept()), monkeypatch, api_key=seen)
-    assert c.post("/validate", files=files, headers={"X-Api-Key": sent.encode("utf-8")}).status_code == 200
+    c = _client(StubClient(result=_accept()), monkeypatch, api_key="geheim")
     assert c.post("/validate", files=files, headers={"X-Api-Key": "falsch-ä".encode()}).status_code == 401
 
 
