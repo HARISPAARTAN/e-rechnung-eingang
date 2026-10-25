@@ -29,7 +29,7 @@ Der Kaltstart (Container plus Daemon-Start) wird in Kauf genommen.
   Prozesse (auch Java bei Speichermangel über `-XX:+ExitOnOutOfMemoryError`), beendet es den anderen und den
   Container mit einem Fehlercode, damit die Plattform ihn neu startet.
 - Anfragegröße: Schlüssel und `Content-Length` werden vor dem Lesen des Inhalts geprüft, gestreamte Uploads werden
-  mitgezählt und über 10 MB mit 413 abgebrochen. Eine Grenze am Ingress ist damit nicht nötig.
+  mitgezählt und über 10 MiB mit 413 abgebrochen. Eine Grenze am Ingress ist damit nicht nötig.
 
 ### Umsetzung in Meilenstein 2 (2026-10-25)
 
@@ -55,6 +55,13 @@ Der Kaltstart (Container plus Daemon-Start) wird in Kauf genommen.
   zwei Credentials, `github-production` (Namen) und `github-production-ids` (IDs); `deploy/github-oidc.sh` legt beide an.
 - Gemessen (2026-10-25): Kaltstart 22,6 s, warmes `/health` 0,1 s, Image-Pull 5 s; die Probes lieferten 200, kein
   `ProbeFailed`. Zahlen und Kontingentrechnung stehen im Runbook und in der README.
-- Übergroße Uploads: Der Dienst antwortet 413; der Ingress trennt danach die Verbindung. Clients, die den ganzen Körper vor dem
-  Lesen schreiben (`httpx` unter Windows), sehen einen Abbruch statt der Antwort. Der Smoke-Test wertet beides als abgelehnt,
-  den Abbruch nur bei danach gesundem `/health`.
+- Übergroße Uploads: Der Dienst antwortet 413 und entscheidet an der angegebenen `Content-Length`. Beobachtet (ein
+  Windows-Rechner, ein Runner-Lauf): der Ingress trennt danach die Verbindung, und ein Client, der den ganzen Körper vor
+  dem Lesen schreibt (`httpx` unter Windows), sieht einen Abbruch statt der Antwort. Der Smoke-Test entscheidet deshalb
+  mit einer Anfrage ohne Körper und `Content-Length` von 11 MiB (erwartet 413 auf jedem System), prüft mit 9 MiB, dass
+  das 413 von der Größe abhängt, und wertet den echten Upload nur als abgelehnt bei 413 oder bei einem Abbruch
+  (`WriteError`, `ReadError`, `RemoteProtocolError`) in unter 5 s, wenn danach ein gültiges UBL noch 200 und
+  `gueltig: true` ergibt. Ein Timeout oder `ConnectError` ist ein Fehler.
+- OIDC-Skript: Idempotenz nach Name und Subject; weicht das Subject eines vorhandenen Credentials ab (Repository
+  umbenannt oder neu angelegt), bricht das Skript mit beiden Werten ab, und das Credential wird von Hand gelöscht.
+  `REPO` ist im Skript fest eingetragen.

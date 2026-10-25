@@ -7,8 +7,10 @@
   Federated Credentials wegen der beiden Subject-Formen von GitHub), Runbook `deploy/README.md`.
 - Workflows: `release` baut und veröffentlicht das Image auf GHCR und aktualisiert die Container App per OIDC, danach
   Smoke-Test gegen die Live-URL (`tools/smoke_remote.py`, Artefakt `smoke.xml`); `keepalive` ruft monatlich `/health` auf.
-- Smoke-Test: erwartet 413 bei Upload über 10 MB; ein Verbindungsabbruch zählt nur bei danach gesundem `/health` (Windows-Clients
-  sehen den Abbruch, `curl` und der Linux-Runner das 413).
+- Smoke-Test: Entscheidung über eine Anfrage ohne Körper mit `Content-Length` 11 MiB (erwartet 413, auf jedem System) und
+  eine Gegenprobe mit 9 MiB; der echte Upload gilt bei 413 oder einem schnellen Abbruch (unter 5 s) als abgelehnt, wenn
+  danach ein gültiges UBL 200 und `gueltig: true` ergibt, Timeouts schlagen fehl. `deploy/github-oidc.sh` legt beide
+  Credentials an, vergleicht das Subject und bricht bei Abweichung ab.
 - Gemessen: Kaltstart 22,6 s, warm 0,1 s (siehe "M2 Betrieb" unten und README "Betrieb auf Azure").
 - Versionen: Paket und Dienst 0.2.0. Tag `v0.2.0` folgt nach grünem CI und Prüfung.
 
@@ -17,13 +19,12 @@
 - Erstbereitstellung mit `deploy/azure.sh v0.2.0-rc1` in `rg-erechnung` (`germanywestcentral`), Container App
   `ca-erechnung`, Revisionen `ca-erechnung--hbq4h1u` (rc1) und `ca-erechnung--0000001` (rc2). GHCR-Paket öffentlich, der Pull
   brauchte keine Zugangsdaten.
-- Kaltstart nach Skalierung auf null 22,6 s (Image-Pull 5,0 s, uvicorn 9 s nach Containerstart), warm `/health` 0,1 s und
+- Kaltstart nach Skalierung auf null 22,6 s, etwa 18 bis 23 s (Image-Pull 5,0 s, uvicorn 9 s nach Containerstart; laut Log bereit rund 18 bis 20 s nach der Anfrage, der Rest vermutlich der 5-s-Takt des Tests), warm `/health` 0,1 s und
   `/validate` 0,1 bis 0,3 s. Startup-, Liveness- und Readiness-Probe liefern 200, kein `ProbeFailed`, Revision `Healthy`.
-- Gratiskontingent: rund 330 Replik-Sekunden je Sitzung, eine Demo mit 30 Sitzungen und 500 Prüfungen kostet rund 5,5
-  Prozent der Kontingente (Rechnung im Runbook).
-- Übergroße Uploads: Der Dienst antwortet über 10 MB mit 413 (`curl` und der Linux-Runner sehen es); Python/`httpx` unter
-  Windows sieht einen Verbindungsabbruch. `tools/smoke_remote.py` erwartet 413 und akzeptiert den Abbruch nur, wenn
-  `/health` danach 200 meldet.
+- Gratiskontingent (Obergrenze): rund 330 Replik-Sekunden je Sitzung, eine Demo mit 30 Sitzungen und 500 Prüfungen (150 s)
+  braucht rund 5,6 Prozent der Kontingente (Rechnung im Runbook).
+- Übergroße Uploads: Der Dienst antwortet über 10 MiB mit 413. Beobachtet: `curl` (10,1 bis 11 MiB) und ein Linux-Runner
+  sehen es; `httpx` auf einem Windows-Rechner sah in 24 von 24 Uploads einen Verbindungsabbruch. Regel im Smoke-Test siehe oben.
 
 ## v0.1.1 (2026-10-25) Härtung nach Review
 

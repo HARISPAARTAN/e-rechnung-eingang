@@ -29,15 +29,21 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
    `curl -s https://<fqdn>/health` muss `"status":"ok"` liefern. Vollständiger Test mit Messwerten:
    `uv run python tools/smoke_remote.py --base-url https://<fqdn>`
    (liest den Schlüssel aus `deploy/.secrets/ere_api_key`; prüft Health, 401 ohne Schlüssel, gültige XRechnung und gültiges
-   ZUGFeRD-PDF, 413 über 10 MB).
-   Der 413-Fall sendet 11 MiB. Gemessen gegen den echten Dienst: der Dienst antwortet immer 413 (im Container-Log
-   `POST /validate 413 Content Too Large`), und der Ingress trennt danach die Verbindung, während der Client noch schreibt.
-   `curl` zeigt dabei bei 10,1, 10,5 und 11 MiB, mit und ohne `Expect: 100-continue`, jedes Mal 413. Der Smoke-Test
-   mit `httpx` auf Windows bekommt dagegen jedes Mal einen Transportfehler (`"too_large": "reset"`), weil er den ganzen
-   Körper schreibt, bevor er liest, und der Verbindungsabbruch die Antwort verwirft; auf dem Linux-Runner von GitHub
-   (Deploy-Job von `v0.2.0-rc2`) kam 413 an. Die Regel in `tools/smoke_remote.py` erwartet daher 413 und lässt
-   `reset` nur gelten, wenn der Körper über der Grenze lag (der Test sendet immer 11 MiB) und `/health` danach noch 200
-   liefert (Feld `health_after`); ein Dienst, der die Datei angenommen hätte, würde 200 oder 422 melden, nie einen Abbruch.
+   ZUGFeRD-PDF, 413 über 10 MiB).
+   Der 413-Fall: Der Dienst entscheidet an der angegebenen `Content-Length` (ASGI-Guard) und antwortet 413, bevor er den
+   Körper liest (Container-Log: `POST /validate 413 Content Too Large`). Danach trennt der Ingress die Verbindung, während
+   der Client noch schreibt. Beobachtet: `curl` zeigt bei 10,1, 10,5 und 11 MiB, mit und ohne `Expect: 100-continue` und
+   mit `--http1.1`, jedes Mal 413. Der Smoke-Test mit `httpx` auf einem Windows-Rechner bekam bei 24 von 24 Uploads
+   (10,1, 10,5 und 11 MiB) stattdessen `ReadError`, vermutlich weil er den ganzen Körper schreibt, bevor er liest, und der
+   Abbruch die Antwort verwirft; auf einem GitHub-Linux-Runner (Deploy-Job von `v0.2.0-rc2`) kam 413 an. Das sind zwei
+   Beobachtungen, keine Gesetzmäßigkeit. Die Regel in `tools/smoke_remote.py` stützt sich deshalb nicht auf den Upload:
+   - Entscheidend ist eine Anfrage ohne Körper mit `Content-Length: 11534336` (`http.client`); sie liefert auf jedem
+     System 413 nach rund 0,1 s. Eine zweite mit 9 MiB darf kein 413 liefern (der Dienst wartet auf den Körper, die
+     Anfrage läuft nach 3 s in den Timeout); so ist das 413 an die Größe gebunden.
+   - Der echte Upload von 11 MiB gilt bei 413 als abgelehnt, ebenso bei einem Abbruch (`WriteError`, `ReadError`,
+     `RemoteProtocolError`, Ausgabe `reset:<Klasse>`) in unter 5 s, wenn danach ein gültiges UBL mit Schlüssel noch 200 und
+     `gueltig: true` liefert (Feld `after_reset`). Ein Timeout, `ConnectError` oder ein anderer Status ist ein Fehler.
+   - Ausgabefelder: `declared_11mib`, `declared_9mib`, `too_large`, `too_large_seconds`, `after_reset`.
 7. Automatische Bereitstellung per GitHub Actions (ohne gespeicherte Azure-Passwörter, nur OIDC):
    1. `deploy/github-oidc.sh` ausführen (nach Schritt 5, die Ressourcengruppe muss existieren; braucht `gh` mit Anmeldung). Es
       legt die Entra-App `erechnung-github-deploy` an, gibt ihr Contributor nur auf `rg-erechnung` und gibt drei Kennungen
@@ -45,11 +51,15 @@ Der Dienst skaliert auf null Replikate (min 0, max 1) und startet bei der ersten
       exakt vergleicht und GitHub ihn in zwei Formen ausstellt:
       - `github-production`: `repo:HARISPAARTAN/e-rechnung-eingang:environment:production` (Namen)
       - `github-production-ids`: `repo:HARISPAARTAN@<Owner-ID>/e-rechnung-eingang@<Repo-ID>:environment:production`
-        (numerische IDs, das Skript liest sie mit `gh api repos/HARISPAARTAN/e-rechnung-eingang --jq '.owner.id, .id'`).
+        (numerische IDs, das Skript liest sie mit einem Aufruf `gh api repos/HARISPAARTAN/e-rechnung-eingang --jq '.owner.id, .id'`
+        und bricht ab, bevor es etwas in Entra anlegt, wenn `gh` nicht angemeldet ist oder keine IDs liefert).
       Beim ersten echten Deploy (Tag `v0.2.0-rc2`) zeigte GitHub die ID-Form; ohne dieses Credential scheitert der Login
       mit `AADSTS700213: No matching federated identity record found for presented assertion subject ...`. Die Fehlermeldung
-      nennt den erwarteten Subject-Wert; ein neu gelegtes Repository oder ein Umbenennen/Übertragen ändert die IDs
-      bzw. Namen, dann das Skript erneut ausführen (es legt nur Fehlendes an).
+      nennt den erwarteten Subject-Wert; ein Umbenennen, Übertragen oder
+      Neuanlegen des Repositories ändert Namen bzw. IDs. Das Skript legt nur Fehlendes an und vergleicht bei vorhandenen
+      Credentials das Subject: weicht es ab, bricht es mit beiden Werten ab und nennt die Abhilfe
+      (`az ad app federated-credential delete --id <Objekt-ID> --federated-credential-id <Name>`, danach erneut ausführen).
+      `REPO` steht fest im Skript; nach einer Umbenennung zuerst dort anpassen.
    2. **[Eigentümer]** GitHub > Repository > Settings > Environments > New environment `production`. Darin drei Secrets
       eintragen: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (Werte aus der Skriptausgabe) und das Secret
       `ERE_API_KEY` (Inhalt der Datei `deploy/.secrets/ere_api_key`, am besten ohne Umweg über die Zwischenablage-Historie).
@@ -85,7 +95,7 @@ Region `germanywestcentral`, 1 vCPU und 2 GiB, Revision `ca-erechnung--hbq4h1u` 
 |---|---|
 | warmer `/health` | 0,1 s |
 | warmes `/validate` (curl, mit TLS) | UBL 0,26 bis 0,31 s, ZUGFeRD-PDF 0,12 bis 0,16 s |
-| Kaltstart nach Skalierung auf null (Smoke-Test, `seconds_until_ok`) | 22,6 s (16:51 Ortszeit; der Test fragt alle 5 s, also 17,6 bis 22,6 s) |
+| Kaltstart nach Skalierung auf null (Smoke-Test, `seconds_until_ok`) | 22,6 s, etwa 18 bis 23 s (16:51 Ortszeit; laut Log war die Replik rund 18 bis 20 s nach der Anfrage bereit, der Rest ist vermutlich der 5-s-Takt des Tests: Schlussfolgerung) |
 | Bestandteile des Kaltstarts laut System- und Konsolenlog (UTC) | Replik zugewiesen 15:51:41; Image gezogen in 5,0 s (142,6 MB); Container gestartet 15:51:49; uvicorn 15:51:58; erster Probe-Aufruf `/health` 200 um 15:51:59 |
 | Abschaltung | Ereignis `KEDAScaleTargetDeactivated` (1 auf 0) um 15:50:31 UTC, `cooldownPeriod` 300 s |
 
@@ -106,7 +116,7 @@ Gratiskontingenten bleibt: 180.000 vCPU-Sekunden, 360.000 GiB-Sekunden und 2 Mil
 Rechenbeispiel Demo mit den gemessenen Werten (Obergrenze, weil die Abrechnung im Leerlauf günstiger sein kann): Eine
 Sitzung besteht aus einem Kaltstart (rund 20 s) und den Anfragen; danach läuft die Replik noch 300 s (`cooldownPeriod`)
 bis zur Abschaltung. Eine Sitzung zählt also rund 330 Replik-Sekunden, das sind 330 vCPU-s und 660 GiB-s. 30 Sitzungen
-im Monat mit zusammen 500 Prüfungen (je rund 0,3 s) ergeben etwa 9.900 vCPU-s und 19.800 GiB-s, jeweils rund 5,5 Prozent der
+im Monat mit zusammen 500 Prüfungen (je rund 0,3 s, zusammen 150 s) ergeben etwa 10.050 vCPU-s und 20.100 GiB-s, jeweils rund 5,6 Prozent der
 Kontingente; 500 Anfragen sind 0,025 Prozent der 2 Millionen. Bis zur Grenze der Gratiskontingente wären es rund 545 Sitzungen
 im Monat (180.000 s geteilt durch 330 s, etwa 18 pro Tag). Eine dauerhaft laufende Replik käme auf 2.592.000 Sekunden im Monat,
 das 14-Fache des Kontingents; Skalierung auf null ist also Voraussetzung. Log Analytics (`law-erechnung`) enthält im Tarif PerGB2018 monatlich 5 GB kostenlose Aufnahme, ein

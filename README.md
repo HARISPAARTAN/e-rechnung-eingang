@@ -45,7 +45,7 @@ Statuscodes von `/validate`:
 | 200 | Datei verarbeitet; das Prüfergebnis steht in `gueltig`, `fehler`, `warnungen` |
 | 400 | `Content-Length` nicht numerisch oder Multipart-Inhalt nicht lesbar |
 | 401 | Header `X-Api-Key` fehlt oder ist falsch (geprüft, bevor der Inhalt gelesen wird) |
-| 413 | Datei größer als 10 MB (`max_upload_mb` in `config.toml`; per `Content-Length` oder beim Mitzählen eines gestreamten Uploads) |
+| 413 | Datei größer als 10 MiB (`max_upload_mb` in `config.toml`; per `Content-Length` oder beim Mitzählen eines gestreamten Uploads) |
 | 422 | dauerhafter Eingabefehler: weder PDF noch XML, PDF nicht lesbar oder verschlüsselt, kein eingebettetes XML, eingebettetes XML größer als die Upload-Grenze oder in nicht unterstützter Kodierung, XML nicht wohlgeformt, DOCTYPE, unbekannte Syntax, fehlendes Feld `file`, oder der Validator hat die Eingabe abgewiesen |
 | 502 | Validator-Daemon nicht erreichbar oder interner Fehler (vorübergehend, Wiederholung sinnvoll) |
 
@@ -129,13 +129,14 @@ ein Timeout von mindestens 60 s und sollten bei 502 oder 503 wiederholen.
 - **Bereitstellung:** Ein Tag `v*` startet den Workflow `release`: Er baut das Image und legt es öffentlich unter
   `ghcr.io/harispaartan/e-rechnung-eingang:<tag>` ab. Der Job `deploy` meldet sich per OIDC an Azure an (kein gespeichertes
   Azure-Passwort; Umgebung `production`), setzt das neue Image auf die Container App und führt `tools/smoke_remote.py`
-  gegen die laufende URL aus (Health, 401 ohne Schlüssel, gültige XRechnung und ZUGFeRD-PDF, Upload über 10 MB); das
+  gegen die laufende URL aus (Health, 401 ohne Schlüssel, gültige XRechnung und ZUGFeRD-PDF, Upload über 10 MiB); das
   Ergebnis liegt als Artefakt `smoke.xml` am Lauf. Die erste Bereitstellung und die Einrichtung des Zugriffs macht der
   Eigentümer mit `deploy/azure.sh` und `deploy/github-oidc.sh`.
 - **OIDC-Subjects:** GitHub stellt das Subject der Umgebung in zwei Formen aus, und Entra vergleicht es exakt. Das Skript legt
   deshalb zwei Federated Credentials an: `repo:HARISPAARTAN/e-rechnung-eingang:environment:production` und
   `repo:HARISPAARTAN@<Owner-ID>/e-rechnung-eingang@<Repo-ID>:environment:production`. Fehlt eines, scheitert der Login
-  mit `AADSTS700213` und nennt den erwarteten Wert.
+  mit `AADSTS700213` und nennt den erwarteten Wert. Das Skript vergleicht auch das Subject vorhandener Credentials und
+  bricht bei Abweichung ab (etwa nach einer Umbenennung; `REPO` steht fest im Skript).
 - **Proben:** Alle drei rufen `GET /health` auf Port 8080 auf; als Erfolg gilt 200 bis 399. `/health` antwortet 503, wenn
   der Validator-Daemon nicht antwortet, und lässt damit jede Probe fehlschlagen. Startup: bis zu rund 190 s für den
   Start (Schwelle 36 mal 5 s). Readiness: nach 3 Fehlschlägen im Abstand von 10 s bekommt die Replik keinen Verkehr.
@@ -148,19 +149,22 @@ ein Timeout von mindestens 60 s und sollten bei 502 oder 503 wiederholen.
 
 ### Kaltstart und Kontingent
 
-Gemessen am 2026-10-25 (Rechner in Deutschland, Revision `ca-erechnung--0000001`):
+Gemessen am 2026-10-25 (vom Heimnetz des Eigentümers, Revision `ca-erechnung--0000001`):
 
 - **Kaltstart** nach Skalierung auf null: **22,6 s** bis `/health` mit 200 antwortet (Image-Pull 5 s, Container und
-  Validator-Daemon bis uvicorn rund 9 s; der Test fragt alle 5 s, der wahre Wert liegt bei 18 bis 23 s). Eine Replik
+  Validator-Daemon bis uvicorn rund 9 s). Das sind etwa 18 bis 23 s: laut Log war die Replik rund 18 bis 20 s nach der
+  Anfrage bereit, der Rest ist vermutlich der 5-s-Takt des Tests (Schlussfolgerung, nicht einzeln gemessen). Eine Replik
   wird nach 300 s ohne Anfrage abgeschaltet.
 - **Warm:** `/health` in 0,1 s, `/validate` in 0,1 bis 0,3 s.
 - **Kontingent:** Die Gratiskontingente (180.000 vCPU-s, 360.000 GiB-s, 2 Millionen Anfragen im Monat) reichen als
   Obergrenze für rund 545 Sitzungen im Monat zu je 330 Replik-Sekunden (Kaltstart plus 300 s Wartezeit bis zur
-  Abschaltung). Eine Demo mit 30 Sitzungen und 500 Prüfungen braucht rund 9.900 vCPU-s und 19.800 GiB-s, also
-  rund 5,5 Prozent. Eine dauerhaft laufende Replik käme auf das 14-Fache des Kontingents.
-- **Übergroße Uploads:** Der Dienst antwortet über 10 MB mit 413. `curl` und der GitHub-Runner sehen das 413; ein
-  Python-Client unter Windows kann statt der Antwort einen Verbindungsabbruch sehen, weil der Ingress die Verbindung
-  schließt, während noch geschrieben wird. Clients sollten beide Fälle als abgelehnt behandeln.
+  Abschaltung). Eine Demo mit 30 Sitzungen und 500 Prüfungen (zusammen 150 s) braucht rund 10.050 vCPU-s und
+  20.100 GiB-s, also rund 5,6 Prozent. Eine dauerhaft laufende Replik käme auf das 14-Fache des Kontingents.
+- **Übergroße Uploads:** Der Dienst antwortet über 10 MiB mit 413, entschieden an der angegebenen `Content-Length`. Beobachtet:
+  `curl` (getestet bei 10,1 bis 11 MiB) und ein GitHub-Linux-Runner sehen das 413; `httpx` auf einem Windows-Rechner sah
+  bei 24 von 24 Uploads statt der Antwort einen Verbindungsabbruch, vermutlich weil der Ingress die Verbindung schließt,
+  während noch geschrieben wird. Clients sollten einen schnellen Abbruch bei einem Upload über 10 MiB als abgelehnt
+  behandeln, aber nicht einen Timeout.
 
 ## Entscheidungen und Grenzen
 

@@ -45,7 +45,7 @@ Status codes of `/validate`:
 | 200 | file processed; the verdict is in `gueltig`, `fehler`, `warnungen` |
 | 400 | `Content-Length` not numeric or multipart body unreadable |
 | 401 | header `X-Api-Key` missing or wrong (checked before the body is read) |
-| 413 | file larger than 10 MB (`max_upload_mb` in `config.toml`; from `Content-Length` or by counting a streamed upload) |
+| 413 | file larger than 10 MiB (`max_upload_mb` in `config.toml`; from `Content-Length` or by counting a streamed upload) |
 | 422 | permanent input error: neither PDF nor XML, PDF unreadable or encrypted, no embedded XML, embedded XML larger than the upload limit or in an unsupported encoding, XML not well-formed, DOCTYPE, unknown syntax, missing field `file`, or the validator refused the input |
 | 502 | validator daemon unreachable or failing (transient, worth a retry) |
 
@@ -129,13 +129,14 @@ and retry on 502 or 503.
 - **Deployment:** a tag `v*` starts the `release` workflow: it builds the image and publishes it publicly as
   `ghcr.io/harispaartan/e-rechnung-eingang:<tag>`. The `deploy` job signs in to Azure with OIDC (no stored Azure
   password; environment `production`), sets the new image on the container app and runs `tools/smoke_remote.py`
-  against the live URL (health, 401 without key, valid XRechnung and ZUGFeRD PDF, upload over 10 MB); the result is
+  against the live URL (health, 401 without key, valid XRechnung and ZUGFeRD PDF, upload over 10 MiB); the result is
   attached to the run as the `smoke.xml` artifact. The owner does the first deployment and the access setup with
   `deploy/azure.sh` and `deploy/github-oidc.sh`.
 - **OIDC subjects:** GitHub issues the subject of the environment in two forms and Entra compares it exactly, so the
   script creates two federated credentials: `repo:HARISPAARTAN/e-rechnung-eingang:environment:production` and
   `repo:HARISPAARTAN@<owner id>/e-rechnung-eingang@<repo id>:environment:production`. If one is missing, the login fails
-  with `AADSTS700213` and names the expected value.
+  with `AADSTS700213` and names the expected value. The script also compares the subject of existing credentials and
+  stops on a mismatch (for example after a rename; `REPO` is fixed in the script).
 - **Probes:** all three call `GET /health` on port 8080; 200 to 399 counts as success. `/health` answers 503 when the
   validator daemon does not respond, which makes every probe fail. Startup: up to about 190 s for the start (threshold
   36 times 5 s). Readiness: after 3 failures 10 s apart the replica receives no traffic. Liveness: after 3 failures
@@ -147,19 +148,22 @@ and retry on 502 or 503.
 
 ### Cold start and free grant
 
-Measured on 2026-10-25 (machine in Germany, revision `ca-erechnung--0000001`):
+Measured on 2026-10-25 (from the owner's home network, revision `ca-erechnung--0000001`):
 
 - **Cold start** after scale-to-zero: **22.6 s** until `/health` answers 200 (image pull 5 s, container and validator
-  daemon up to uvicorn about 9 s; the test polls every 5 s, so the true value is 18 to 23 s). A replica is shut down
-  after 300 s without requests.
+  daemon up to uvicorn about 9 s). That is about 18 to 23 s: according to the log the replica was ready about 18 to
+  20 s after the request, and the rest is probably the 5 s polling step of the test (an inference, not measured
+  separately). A replica is shut down after 300 s without requests.
 - **Warm:** `/health` in 0.1 s, `/validate` in 0.1 to 0.3 s.
 - **Grant:** the free monthly grants (180,000 vCPU-s, 360,000 GiB-s, 2 million requests) allow, as an upper bound,
   about 545 sessions a month at 330 replica-seconds each (cold start plus 300 s wait before shutdown). A demo with
-  30 sessions and 500 checks needs about 9,900 vCPU-s and 19,800 GiB-s, roughly 5.5 percent. A replica that never
+  30 sessions and 500 checks (150 s together) needs about 10,050 vCPU-s and 20,100 GiB-s, roughly 5.6 percent. A replica that never
   scaled down would use 14 times the grant.
-- **Oversized uploads:** the service answers 413 above 10 MB. `curl` and the GitHub runner see the 413; a Python
-  client on Windows can see a connection reset instead of the response, because the ingress closes the connection
-  while the client is still writing. Clients should treat both as rejected.
+- **Oversized uploads:** the service answers 413 above 10 MiB, decided from the declared `Content-Length`. Observed:
+  `curl` (tested at 10.1 to 11 MiB) and a GitHub Linux runner see the 413; `httpx` on one Windows machine saw a
+  connection reset instead of the response in 24 of 24 uploads, probably because the ingress closes the connection
+  while the client is still writing. Clients should treat a fast reset on an upload over 10 MiB as rejected, but not
+  a timeout.
 
 ## Decisions and limits
 
