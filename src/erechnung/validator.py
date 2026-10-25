@@ -93,8 +93,8 @@ class ValidatorClient:
 
     def health(self) -> dict:
         try:
-            resp = httpx.get(f"{self.base_url}/server/health", timeout=5.0)
-        except httpx.HTTPError as exc:
+            resp = httpx.get(f"{self.base_url}/server/health", timeout=2.0)
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise ValidatorError(f"Validator nicht erreichbar: {exc}") from exc
         status = "UP" if resp.status_code == 200 and b"UP" in resp.content else "DOWN"
         return {"status": status, "http": resp.status_code}

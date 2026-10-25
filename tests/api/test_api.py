@@ -12,11 +12,14 @@ FX = ROOT / "fixtures"
 
 
 class StubClient:
-    def __init__(self, result=None, error=None):
+    def __init__(self, result=None, error=None, health=None):
         self.result, self.error, self.calls = result, error, []
+        self._health = health if health is not None else {"status": "UP", "http": 200}
 
     def health(self):
-        return {"status": "UP", "http": 200}
+        if isinstance(self._health, Exception):
+            raise self._health
+        return self._health
 
     def validate(self, xml, name="rechnung.xml"):
         self.calls.append(name)
@@ -41,6 +44,19 @@ def test_health(monkeypatch):
     c = _client(StubClient(), monkeypatch)
     body = c.get("/health").json()
     assert body["status"] == "ok" and body["validator"]["status"] == "UP" and body["versions"]["validator"] == "1.6.3"
+
+
+def test_health_degraded_when_validator_unreachable(monkeypatch):
+    c = _client(StubClient(health=ValidatorError("Validator nicht erreichbar: boom")), monkeypatch)
+    body = c.get("/health").json()
+    assert body["status"] == "degraded"
+    assert body["validator"] == {"status": "DOWN", "detail": "Validator nicht erreichbar: boom"}
+
+
+def test_health_degraded_when_validator_reports_down(monkeypatch):
+    c = _client(StubClient(health={"status": "DOWN", "http": 503}), monkeypatch)
+    body = c.get("/health").json()
+    assert body["status"] == "degraded" and body["validator"] == {"status": "DOWN", "http": 503}
 
 
 def test_validate_xml_fixture(monkeypatch):
@@ -96,6 +112,17 @@ def test_api_key_required_when_configured(monkeypatch):
     assert c.post("/validate", files=files, headers={"X-Api-Key": "falsch"}).status_code == 401
     assert c.post("/validate", files=files, headers={"X-Api-Key": "geheim"}).status_code == 200
     assert c.get("/health").status_code == 200
+
+
+def test_non_ascii_api_key_does_not_crash(monkeypatch):
+    sent = "geheim-äöü-ß"
+    # TestClient puts header values on the wire as UTF-8; Starlette decodes header bytes as latin-1,
+    # so the service sees the mojibake form. A configured key equal to that form must match.
+    seen = sent.encode("utf-8").decode("latin-1")
+    files = {"file": ("a.xml", (FX / "xrechnung" / "01.01a-INVOICE_ubl.xml").read_bytes(), "application/xml")}
+    c = _client(StubClient(result=_accept()), monkeypatch, api_key=seen)
+    assert c.post("/validate", files=files, headers={"X-Api-Key": sent.encode("utf-8")}).status_code == 200
+    assert c.post("/validate", files=files, headers={"X-Api-Key": "falsch-ä".encode()}).status_code == 401
 
 
 def test_413_for_oversized_upload(monkeypatch):

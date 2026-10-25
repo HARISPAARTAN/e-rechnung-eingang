@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import hmac
 import re
 from typing import Annotated
 
@@ -19,7 +19,6 @@ from .sniff import detect_type
 from .syntax import MalformedXml, UnsupportedSyntax, detect_profile, detect_syntax, parse_xml, profile_level
 from .validator import Meldung, ValidatorClient, ValidatorError
 
-log = logging.getLogger(__name__)
 UNCHECKED_LEVELS = {"MINIMUM", "BASIC WL", "BASIC"}
 PROFIL_WARNUNG = Meldung("warning", "PROFIL-AUSSERHALB", "Profil außerhalb der XRechnung-Prüfregeln")
 SZENARIO_WARNUNG = Meldung(
@@ -43,7 +42,9 @@ def create_app(settings: Settings | None = None, client: ValidatorClient | None 
     app = FastAPI(title="E-Rechnung-Eingang Prüfdienst", version=__version__)
 
     def require_key(x_api_key: Annotated[str | None, Header()] = None) -> None:
-        if settings.api_key and x_api_key != settings.api_key:
+        if settings.api_key and not hmac.compare_digest(
+            (x_api_key or "").encode("utf-8"), settings.api_key.encode("utf-8")
+        ):
             raise HTTPException(status_code=401, detail="ungültiger oder fehlender X-Api-Key")
 
     @app.get("/health")
@@ -63,9 +64,10 @@ def create_app(settings: Settings | None = None, client: ValidatorClient | None 
         }
 
     @app.post("/validate", dependencies=[Depends(require_key)])
-    async def validate(file: Annotated[UploadFile, File()]) -> dict:
-        data = await file.read()
-        if len(data) > settings.max_upload_mb * 1024 * 1024:
+    def validate(file: Annotated[UploadFile, File()]) -> dict:
+        limit = settings.max_upload_mb * 1024 * 1024
+        data = file.file.read(limit + 1)
+        if len(data) > limit:
             raise HTTPException(status_code=413, detail=f"Datei größer als {settings.max_upload_mb} MB")
         dateityp = detect_type(data)
         if dateityp == "unknown":
