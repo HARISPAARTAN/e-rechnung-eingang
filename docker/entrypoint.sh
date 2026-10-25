@@ -9,7 +9,7 @@ HEALTH_URL="http://127.0.0.1:${ERE_VALIDATOR_PORT}/server/health"
 # Fail fast on configuration errors (e.g. ERE_API_KEY missing) before the JVM starts.
 python -c "import erechnung.api as api; api.app" || { echo "configuration error, not starting" >&2; exit 1; }
 
-java -XX:+ExitOnOutOfMemoryError -Xmx512m -jar /opt/validator/validator.jar \
+java -XX:+ExitOnOutOfMemoryError -Xmx1g -jar /opt/validator/validator.jar \
   -s /opt/validator/config/scenarios.xml -r /opt/validator/config \
   -D -H 127.0.0.1 -P "${ERE_VALIDATOR_PORT}" --disable-gui &
 VALIDATOR_PID=$!

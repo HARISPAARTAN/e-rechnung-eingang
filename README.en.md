@@ -42,9 +42,10 @@ Status codes of `/validate`:
 | Code | When |
 |---|---|
 | 200 | file processed; the verdict is in `gueltig`, `fehler`, `warnungen` |
+| 400 | `Content-Length` not numeric or multipart body unreadable |
 | 401 | header `X-Api-Key` missing or wrong (checked before the body is read) |
 | 413 | file larger than 10 MB (`max_upload_mb` in `config.toml`; from `Content-Length` or by counting a streamed upload) |
-| 422 | permanent input error: neither PDF nor XML, PDF unreadable or encrypted, no embedded XML, attachment above 50 MiB, XML not well-formed, DOCTYPE, unknown syntax, missing field `file`, or the validator refused the input |
+| 422 | permanent input error: neither PDF nor XML, PDF unreadable or encrypted, no embedded XML, embedded XML larger than the upload limit or in an unsupported encoding, XML not well-formed, DOCTYPE, unknown syntax, missing field `file`, or the validator refused the input |
 | 502 | validator daemon unreachable or failing (transient, worth a retry) |
 
 Error responses always have the shape `{"detail": "..."}` with a string.

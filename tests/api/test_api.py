@@ -284,6 +284,20 @@ def test_encrypted_pdf_is_422(monkeypatch):
     assert resp.status_code == 422 and resp.json() == {"detail": "PDF nicht lesbar"}
 
 
+def test_unsupported_attachment_encoding_is_422(monkeypatch):
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(595, 842))
+    pdf.attachments["k"] = pikepdf.AttachedFileSpec(pdf, b"x", filename="factur-x.xml")
+    pdf.attachments["k"].obj.EF.F.write(b"3c612f3e>", filter=pikepdf.Name.ASCIIHexDecode)
+    out = io.BytesIO()
+    pdf.save(out, compress_streams=False, stream_decode_level=pikepdf.StreamDecodeLevel.none)
+    stub = StubClient(result=_accept())
+    c = _client(stub, monkeypatch)
+    resp = c.post("/validate", files={"file": ("x.pdf", out.getvalue(), "application/pdf")})
+    assert resp.status_code == 422 and resp.json() == {"detail": "Eingebettete Datei: nicht unterstützte Kodierung"}
+    assert stub.calls == []
+
+
 def test_openapi_documents_the_contract(monkeypatch):
     schema = _client(StubClient(), monkeypatch).get("/openapi.json").json()
     props = schema["components"]["schemas"]["ValidateResponse"]["properties"]

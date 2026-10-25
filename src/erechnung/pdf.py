@@ -9,7 +9,8 @@ import pikepdf
 
 # Priority order: Factur-X / ZUGFeRD 2.x, ZUGFeRD 1.0, XRechnung in a PDF container.
 EMBEDDED_NAMES = ("factur-x.xml", "zugferd-invoice.xml", "xrechnung.xml")
-MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+# Fallback for library callers only; the API passes settings.max_upload_mb (the daemon is proven safe at 10 MiB).
+_FALLBACK_MAX_BYTES = 10 * 1024 * 1024
 
 
 class NoEmbeddedInvoice(ValueError):
@@ -17,7 +18,14 @@ class NoEmbeddedInvoice(ValueError):
 
 
 class AttachmentTooLarge(ValueError):
-    """The embedded XML decodes to more than MAX_ATTACHMENT_BYTES."""
+    """The embedded XML decodes to more than the cap (the upload limit)."""
+
+
+class UnsupportedEncoding(ValueError):
+    """The embedded file uses a filter chain that cannot be decoded with a bound."""
+
+    def __init__(self) -> None:
+        super().__init__("Eingebettete Datei: nicht unterstützte Kodierung")
 
 
 def _text(value) -> str:
@@ -29,26 +37,53 @@ def _filename(spec_obj) -> str:
     return _text(spec_obj.get("/UF")) or _text(spec_obj.get("/F"))
 
 
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, pikepdf.Array):
+        return list(value)
+    return [value]
+
+
+def _plain_flate_params(parms) -> bool:
+    """No DecodeParms, an empty dictionary (or null), or Predictor 1: Flate output is the file itself."""
+    items = _as_list(parms)
+    if not items:
+        return True
+    if len(items) > 1:
+        return False
+    params = items[0]
+    if params is None:
+        return True
+    if not isinstance(params, pikepdf.Dictionary):
+        return False
+    predictor = params.get("/Predictor")
+    return predictor is None or int(predictor) == 1
+
+
 def _bounded_bytes(stream: pikepdf.Stream, limit: int) -> bytes:
-    """Decode an embedded file stream without inflating more than limit + 1 bytes for the common Flate case."""
-    filters = stream.get("/Filter")
-    names = [str(f) for f in filters] if isinstance(filters, pikepdf.Array) else ([str(filters)] if filters is not None else [])
-    if not names:
+    """Decode an embedded file stream while never holding more than limit + 1 decoded bytes.
+
+    Only two encodings are accepted: no filter (raw bytes) and plain /FlateDecode (inflated with max_length). Every
+    other filter, filter chain or predictor is refused instead of decoded, because pikepdf's read_bytes() has no bound.
+    """
+    filters = [str(f) for f in _as_list(stream.get("/Filter"))]
+    if not filters:
         data = stream.read_raw_bytes()
-    elif names == ["/FlateDecode"] and stream.get("/DecodeParms") is None:
+    elif filters == ["/FlateDecode"] and _plain_flate_params(stream.get("/DecodeParms")):
         inflater = zlib.decompressobj()
         try:
             data = inflater.decompress(stream.read_raw_bytes(), limit + 1)
         except zlib.error as exc:
             raise pikepdf.PdfError(f"eingebettete Datei nicht dekodierbar: {exc}") from exc
     else:
-        data = stream.read_bytes()
+        raise UnsupportedEncoding()
     if len(data) > limit:
-        raise AttachmentTooLarge(f"eingebettete Rechnung größer als {limit // (1024 * 1024)} MiB")
+        raise AttachmentTooLarge(f"eingebettete Rechnung größer als {limit // (1024 * 1024)} MB")
     return data
 
 
-def extract_embedded_xml(data: bytes, max_bytes: int = MAX_ATTACHMENT_BYTES) -> tuple[str, bytes]:
+def extract_embedded_xml(data: bytes, max_bytes: int = _FALLBACK_MAX_BYTES) -> tuple[str, bytes]:
     """Return (attachment file name, XML bytes).
 
     Attachments are matched by their file name (/UF or /F), not by the name-tree key. Known names win in the order of

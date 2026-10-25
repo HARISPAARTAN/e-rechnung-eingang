@@ -18,7 +18,7 @@ from .config import Settings, load_settings
 from .extract import extract_fields
 from .guard import KEY_DETAIL, UploadGuard
 from .naming import archive_name
-from .pdf import AttachmentTooLarge, NoEmbeddedInvoice, extract_embedded_xml
+from .pdf import AttachmentTooLarge, NoEmbeddedInvoice, UnsupportedEncoding, extract_embedded_xml
 from .report import HealthResponse, ValidateResponse, build_report
 from .sniff import detect_type
 from .syntax import MalformedXml, UnsupportedSyntax, detect_profile, detect_syntax, parse_xml, profile_level
@@ -109,12 +109,12 @@ def create_app(settings: Settings | None = None, client: ValidatorClient | None 
         if dateityp == "unknown":
             raise _reject(422, "weder PDF noch XML", "neither PDF nor XML")
         try:
-            xml = extract_embedded_xml(data)[1] if dateityp == "pdf" else data
+            xml = extract_embedded_xml(data, max_bytes=limit)[1] if dateityp == "pdf" else data
             root = parse_xml(xml)
             syntax = detect_syntax(root)
         except pikepdf.PikepdfError as exc:
             raise _reject(422, "PDF nicht lesbar", f"{type(exc).__name__}: {exc}") from exc
-        except (NoEmbeddedInvoice, AttachmentTooLarge, MalformedXml, UnsupportedSyntax) as exc:
+        except (NoEmbeddedInvoice, AttachmentTooLarge, UnsupportedEncoding, MalformedXml, UnsupportedSyntax) as exc:
             raise _reject(422, str(exc), f"{type(exc).__name__}: {exc}") from exc
         profil = detect_profile(root, syntax)
         zusatz: list[Meldung] = []

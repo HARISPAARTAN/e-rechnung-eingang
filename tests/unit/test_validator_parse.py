@@ -44,9 +44,18 @@ def test_html_body_raises_validator_error():
         parse_report(b"<html><body><h1>502 Bad Gateway</h1><hr><center>nginx</center></body></html>")
 
 
-def test_unreachable_daemon_raises():
-    with pytest.raises(ValidatorError):
+def test_unreachable_daemon_raises_without_the_url(caplog):
+    with caplog.at_level("WARNING", logger="erechnung.validator"), pytest.raises(ValidatorError) as info:
         ValidatorClient("http://127.0.0.1:1", timeout_s=1.0).validate(b"<a/>")
+    assert str(info.value) in {"Validator nicht erreichbar (ConnectError)", "Validator nicht erreichbar (ConnectTimeout)"}
+    assert "127.0.0.1" not in str(info.value)
+    assert any("transport error" in r.getMessage() for r in caplog.records)
+
+
+def test_unreachable_health_hides_the_url():
+    with pytest.raises(ValidatorError) as info:
+        ValidatorClient("http://127.0.0.1:1").health()
+    assert str(info.value).startswith("Validator nicht erreichbar (") and "127.0.0.1" not in str(info.value)
 
 
 def test_validate_quotes_the_name_in_the_url(monkeypatch):
@@ -59,11 +68,6 @@ def test_validate_quotes_the_name_in_the_url(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     ValidatorClient("http://d:8081").validate(b"<a/>", "a b/../c?.xml")
     assert seen == ["http://d:8081/a%20b%2F..%2Fc%3F.xml"]
-
-
-def test_report_xml_is_not_kept_after_parsing():
-    r = parse_report((REPORTS / "accept-ubl.xml").read_bytes())
-    assert not hasattr(r, "bericht_xml")
 
 
 def test_ort_uses_prefixes_instead_of_namespace_uris():

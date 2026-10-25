@@ -11,7 +11,7 @@
 - Vertrag (vor Meilenstein 3): DOCTYPE wird mit 422 abgelehnt; eine 4xx-Antwort des Daemons ergibt 422 statt 502;
   verschlüsselte PDFs 422; BT-110 nur in Rechnungswährung; Sollwert-Tests für alle 14 Felder und eine synthetische
   Rechnung mit Nachlass und Vorauszahlung (UBL und CII).
-- Kleineres: Anhänge nach Dateiname (`/UF`, `/F`) und `/AF`-Reihenfolge, Obergrenze 50 MiB; Fehlerantworten immer
+- Kleineres: Anhänge nach Dateiname (`/UF`, `/F`) und `/AF`-Reihenfolge, jede Dekodierung durch die Upload-Grenze begrenzt (nur ungefiltert oder einfaches Flate, sonst 422), Java mit `-Xmx1g`; Fehlerantworten immer
   `{"detail": "..."}`, Ursachen von 422 und 502 im Log; `ort` mit Präfixen statt Namensräumen; Antwortmodelle in
   OpenAPI; Akzente im Archivnamen gefaltet, `datei_sha256` im Bericht; `PROFIL-AUSSERHALB` unterscheidet MINIMUM und
   BASIC WL (keine E-Rechnung nach § 14 UStG) von BASIC (EN-16931-konform, ohne KoSIT-Szenario); CI mit

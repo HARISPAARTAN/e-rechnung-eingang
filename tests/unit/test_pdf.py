@@ -1,14 +1,15 @@
 import io
+import tracemalloc
+import zlib
 from pathlib import Path
 
 import pikepdf
 import pytest
 
 from erechnung.pdf import (
-    EMBEDDED_NAMES,
-    MAX_ATTACHMENT_BYTES,
     AttachmentTooLarge,
     NoEmbeddedInvoice,
+    UnsupportedEncoding,
     extract_embedded_xml,
     pdfa_conformance,
 )
@@ -85,8 +86,10 @@ def test_known_names_follow_the_priority_order():
     assert extract_embedded_xml(data) == ("ZUGFeRD-invoice.xml", b"<z/>")
 
 
-def test_order_x_is_not_an_invoice_name():
-    assert "order-x.xml" not in EMBEDDED_NAMES
+def test_order_x_does_not_beat_an_invoice_name():
+    # order-x.xml is an order, not an invoice: even first in /AF it loses against xrechnung.xml
+    data = _pdf(("a", "order-x.xml", b"<o/>"), ("b", "xrechnung.xml", b"<x/>"), af_order=["order-x.xml", "xrechnung.xml"])
+    assert extract_embedded_xml(data) == ("xrechnung.xml", b"<x/>")
 
 
 def test_other_xml_attachments_follow_the_af_order():
@@ -108,5 +111,60 @@ def test_decoded_attachment_above_the_cap_is_refused():
     assert extract_embedded_xml(data, max_bytes=3 * 1024 * 1024)[1] == payload
 
 
-def test_default_cap_is_50_mib():
-    assert MAX_ATTACHMENT_BYTES == 50 * 1024 * 1024
+def _pdf_with_stream(raw: bytes, filter_, decode_parms=None) -> bytes:
+    """One factur-x.xml attachment whose embedded-file stream carries exactly raw, /Filter and /DecodeParms."""
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(595, 842))
+    pdf.attachments["k"] = pikepdf.AttachedFileSpec(pdf, b"x", filename="factur-x.xml")
+    pdf.attachments["k"].obj.EF.F.write(raw, filter=filter_, decode_parms=decode_parms)
+    out = io.BytesIO()
+    pdf.save(out, compress_streams=False, stream_decode_level=pikepdf.StreamDecodeLevel.none)  # keep the stream as written
+    return out.getvalue()
+
+
+def test_flate_with_empty_decode_parms_is_bounded_by_the_cap():
+    bomb = zlib.compress(b"<a>" + b"x" * (64 * 1024 * 1024) + b"</a>", 9)  # 64 MiB inflated, about 64 KiB raw
+    data = _pdf_with_stream(bomb, pikepdf.Name.FlateDecode, pikepdf.Dictionary())
+    assert len(data) < 200_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(AttachmentTooLarge):
+            extract_embedded_xml(data, max_bytes=256 * 1024)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 8 * 1024 * 1024, f"held {peak} bytes while refusing a 64 MiB inflate with a 256 KiB cap"
+
+
+@pytest.mark.parametrize("parms", [None, pikepdf.Dictionary(), pikepdf.Dictionary(Predictor=1), pikepdf.Array([pikepdf.Dictionary()])])
+def test_plain_flate_variants_are_decoded(parms):
+    payload = b"<rsm:CrossIndustryInvoice/>"
+    data = _pdf_with_stream(zlib.compress(payload), pikepdf.Name.FlateDecode, parms)
+    assert extract_embedded_xml(data, max_bytes=1024) == ("factur-x.xml", payload)
+
+
+def test_unfiltered_stream_is_length_checked():
+    data = _pdf_with_stream(b"<a>" + b"x" * 2000 + b"</a>", None)
+    with pytest.raises(AttachmentTooLarge):
+        extract_embedded_xml(data, max_bytes=1000)
+    assert extract_embedded_xml(data, max_bytes=4096)[1].startswith(b"<a>x")
+
+
+@pytest.mark.parametrize(
+    "filter_,parms,raw",
+    [
+        (pikepdf.Name.ASCIIHexDecode, None, b"3c612f3e>"),
+        (pikepdf.Array([pikepdf.Name.ASCIIHexDecode, pikepdf.Name.FlateDecode]), None, zlib.compress(b"<a/>").hex().encode() + b">"),
+        (pikepdf.Name.FlateDecode, pikepdf.Dictionary(Predictor=12, Columns=4), zlib.compress(b"<a/>")),
+    ],
+    ids=["ascii-hex", "filter-chain", "png-predictor"],
+)
+def test_other_encodings_are_refused_not_decoded(filter_, parms, raw):
+    with pytest.raises(UnsupportedEncoding, match="Eingebettete Datei: nicht unterstützte Kodierung"):
+        extract_embedded_xml(_pdf_with_stream(raw, filter_, parms))
+
+
+def test_synthetic_fixture_pdf_still_parses_under_the_upload_cap():
+    data = (Path(__file__).resolve().parents[2] / "fixtures" / "zugferd" / "synthetisch" / "nordstern-elbnetz-RE-2026-0042.pdf").read_bytes()
+    name, xml = extract_embedded_xml(data, max_bytes=10 * 1024 * 1024)
+    assert name.lower() == "factur-x.xml" and b"RE-2026-0042" in xml

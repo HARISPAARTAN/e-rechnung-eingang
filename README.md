@@ -42,9 +42,10 @@ Statuscodes von `/validate`:
 | Code | Wann |
 |---|---|
 | 200 | Datei verarbeitet; das Prüfergebnis steht in `gueltig`, `fehler`, `warnungen` |
+| 400 | `Content-Length` nicht numerisch oder Multipart-Inhalt nicht lesbar |
 | 401 | Header `X-Api-Key` fehlt oder ist falsch (geprüft, bevor der Inhalt gelesen wird) |
 | 413 | Datei größer als 10 MB (`max_upload_mb` in `config.toml`; per `Content-Length` oder beim Mitzählen eines gestreamten Uploads) |
-| 422 | dauerhafter Eingabefehler: weder PDF noch XML, PDF nicht lesbar oder verschlüsselt, kein eingebettetes XML, Anhang über 50 MiB, XML nicht wohlgeformt, DOCTYPE, unbekannte Syntax, fehlendes Feld `file`, oder der Validator hat die Eingabe abgewiesen |
+| 422 | dauerhafter Eingabefehler: weder PDF noch XML, PDF nicht lesbar oder verschlüsselt, kein eingebettetes XML, eingebettetes XML größer als die Upload-Grenze oder in nicht unterstützter Kodierung, XML nicht wohlgeformt, DOCTYPE, unbekannte Syntax, fehlendes Feld `file`, oder der Validator hat die Eingabe abgewiesen |
 | 502 | Validator-Daemon nicht erreichbar oder interner Fehler (vorübergehend, Wiederholung sinnvoll) |
 
 Fehlerantworten haben immer die Form `{"detail": "..."}` mit einem Text.

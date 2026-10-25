@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Base: python:3.13-slim-trixie, pinned by digest (multi-arch index, resolved 2026-10-25 with docker buildx imagetools inspect).
+# Base, uv and Temurin images pinned by digest (multi-arch index, resolved 2026-10-25 with docker buildx imagetools inspect).
 # python:3.13-slim-trixie@sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962
 FROM python:3.13-slim-trixie@sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962 AS base
 
@@ -24,7 +24,7 @@ RUN mkdir -p /opt/validator/config && cd /opt/validator \
 
 # --- Python dependencies from uv.lock (the set the tests ran), then the project itself, both non-editable
 FROM base AS deps
-COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.8@sha256:3b7b60a81d3c57ef471703e5c83fd4aaa33abcd403596fb22ab07db85ae91347 /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
@@ -38,7 +38,7 @@ FROM base
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl tini \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=eclipse-temurin:21-jre /opt/java/openjdk /opt/java/openjdk
+COPY --from=eclipse-temurin:21-jre@sha256:227118764cccd3c3294617061aaa93a08309c63a395eefa83e6b35032992ea99 /opt/java/openjdk /opt/java/openjdk
 COPY --from=validator /opt/validator /opt/validator
 WORKDIR /app
 COPY --from=deps /app/.venv /app/.venv

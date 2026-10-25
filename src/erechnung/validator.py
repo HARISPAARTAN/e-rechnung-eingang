@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from urllib.parse import quote
@@ -14,6 +15,7 @@ SCN = "http://www.xoev.de/de/validator/framework/1/scenarios"
 XHTML = "http://www.w3.org/1999/xhtml"
 _NS = {"rep": REP, "s": SCN, "html": XHTML}
 _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True)
+log = logging.getLogger("erechnung.validator")
 
 # xpathLocation in the report uses Q{namespace}name steps; these prefixes keep `ort` short and readable.
 ORT_PREFIXES = {
@@ -125,6 +127,12 @@ def _rejection_message(body: bytes, text: str) -> str:
     return text[:300]
 
 
+def _unreachable(exc: Exception) -> ValidatorError:
+    """Transport failure: the client sees the exception class only, the full message (with the URL) goes to the log."""
+    log.warning("validator transport error: %s: %s", type(exc).__name__, exc)
+    return ValidatorError(f"Validator nicht erreichbar ({type(exc).__name__})")
+
+
 class ValidatorClient:
     def __init__(self, base_url: str, timeout_s: float = 60.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -134,7 +142,7 @@ class ValidatorClient:
         try:
             resp = httpx.get(f"{self.base_url}/server/health", timeout=2.0)
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
-            raise ValidatorError(f"Validator nicht erreichbar: {exc}") from exc
+            raise _unreachable(exc) from exc
         status = "UP" if resp.status_code == 200 and b"UP" in resp.content else "DOWN"
         return {"status": status, "http": resp.status_code}
 
@@ -144,7 +152,7 @@ class ValidatorClient:
                 f"{self.base_url}/{quote(name, safe='')}", content=xml, headers={"Content-Type": "application/xml"}, timeout=self.timeout_s
             )
         except httpx.HTTPError as exc:
-            raise ValidatorError(f"Validator nicht erreichbar: {exc}") from exc
+            raise _unreachable(exc) from exc
         if resp.status_code in (200, 406):
             return parse_report(resp.content)
         if 400 <= resp.status_code < 500:

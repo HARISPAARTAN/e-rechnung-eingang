@@ -23,7 +23,8 @@ Der Kaltstart (Container plus Daemon-Start) wird in Kauf genommen.
 - Gesundheit: Container Apps wertet den `HEALTHCHECK` des Dockerfiles nicht aus. Meilenstein 2 konfiguriert eine
   HTTP-Liveness- und eine HTTP-Readiness-Probe auf `/health`; `/health` antwortet 200 nur bei `"status":"ok"` und
   503, wenn der Daemon nicht antwortet. Ressourcen: 1 vCPU und 2 GiB je Replik (ein 9-MB-Dokument brauchte im Test
-  rund 1,6 GiB).
+  rund 1,6 GiB). Die Liveness-Probe braucht eine Fehlerschwelle über 1, weil die Daemon-Abfrage in `/health` nach
+  2 s abbricht und bei einer schweren Validierung einzeln scheitern kann.
 - Überwachung im Container: tini ist PID 1, das Startskript überwacht Java und uvicorn. Stirbt einer der beiden
   Prozesse (auch Java bei Speichermangel über `-XX:+ExitOnOutOfMemoryError`), beendet es den anderen und den
   Container mit einem Fehlercode, damit die Plattform ihn neu startet.
