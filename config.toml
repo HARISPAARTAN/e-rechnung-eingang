@@ -1,0 +1,11 @@
+[validator]
+version = "1.6.3"
+jar_sha256 = "pending"
+config_release = "2026-08-31"
+config_sha256 = "pending"
+xrechnung_version = "3.0.2"
+daemon_port = 8081
+timeout_s = 60
+
+[service]
+max_upload_mb = 10
