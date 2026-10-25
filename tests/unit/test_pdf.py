@@ -156,8 +156,9 @@ def test_unfiltered_stream_is_length_checked():
         (pikepdf.Name.ASCIIHexDecode, None, b"3c612f3e>"),
         (pikepdf.Array([pikepdf.Name.ASCIIHexDecode, pikepdf.Name.FlateDecode]), None, zlib.compress(b"<a/>").hex().encode() + b">"),
         (pikepdf.Name.FlateDecode, pikepdf.Dictionary(Predictor=12, Columns=4), zlib.compress(b"<a/>")),
+        (pikepdf.Name.FlateDecode, pikepdf.Dictionary(Predictor=pikepdf.Name("/Foo")), zlib.compress(b"<a/>")),
     ],
-    ids=["ascii-hex", "filter-chain", "png-predictor"],
+    ids=["ascii-hex", "filter-chain", "png-predictor", "non-numeric-predictor"],
 )
 def test_other_encodings_are_refused_not_decoded(filter_, parms, raw):
     with pytest.raises(UnsupportedEncoding, match="Eingebettete Datei: nicht unterstützte Kodierung"):

@@ -58,7 +58,12 @@ def _plain_flate_params(parms) -> bool:
     if not isinstance(params, pikepdf.Dictionary):
         return False
     predictor = params.get("/Predictor")
-    return predictor is None or int(predictor) == 1
+    if predictor is None:
+        return True
+    try:
+        return int(predictor) == 1
+    except (TypeError, ValueError):
+        return False  # a malformed Predictor is an unsupported encoding (422), not a server error
 
 
 def _bounded_bytes(stream: pikepdf.Stream, limit: int) -> bytes:
