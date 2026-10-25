@@ -13,6 +13,12 @@ def test_slug_maps_umlauts_and_cleans():
     assert len(slug("x" * 100)) == 60
 
 
+def test_slug_folds_accents():
+    assert slug("Société Générale") == "societe-generale"
+    assert slug("Çelik Ünal Señor") == "celik-uenal-senor"
+    assert slug("Müller") == slug("Müller") == "mueller"  # composed and decomposed umlaut agree
+
+
 def test_archive_name():
     f = Felder(rechnungsnummer="RE-2026-0042", rechnungsdatum=date(2026, 10, 1), verkaeufer_name="Nordstern Projektmanagement GmbH", brutto=Decimal("1190.00"))
     assert archive_name(f, "pdf") == "2026-10-01_nordstern-projektmanagement-gmbh_re-2026-0042.pdf"
