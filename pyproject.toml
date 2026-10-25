@@ -29,6 +29,10 @@ packages = ["src/erechnung"]
 testpaths = ["tests"]
 markers = ["validator: needs a running KoSIT validator daemon (ERE_VALIDATOR_URL or java)"]
 addopts = "-m 'not validator'"
+filterwarnings = [
+  # starlette 1.x prefers httpx2 for its TestClient; httpx works, the notice is not ours
+  'ignore:Using `httpx` with `starlette.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
+]
 
 [tool.ruff]
 line-length = 110

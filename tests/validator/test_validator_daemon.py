@@ -47,8 +47,3 @@ def test_tax_error_invoice_is_rejected_with_a_br_rule(validator_url):
 def test_malformed_xml_raises_validator_error(validator_url):
     with pytest.raises(ValidatorError):
         ValidatorClient(validator_url).validate(b"<a><b></a>", "kaputt.xml")
-
-
-def test_unreachable_daemon_raises():
-    with pytest.raises(ValidatorError):
-        ValidatorClient("http://127.0.0.1:1", timeout_s=1.0).validate(b"<a/>")

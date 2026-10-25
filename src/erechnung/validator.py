@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 from lxml import etree
@@ -47,7 +48,10 @@ def _int(value: str | None) -> int | None:
 
 
 def parse_report(xml: bytes) -> Pruefergebnis:
-    root = etree.fromstring(xml, parser=_PARSER)
+    try:
+        root = etree.fromstring(xml, parser=_PARSER)
+    except etree.XMLSyntaxError as exc:
+        raise ValidatorError("Validator lieferte kein XML") from exc
     if etree.QName(root).namespace != REP or etree.QName(root).localname != "report":
         raise ValidatorError("unerwartetes Berichtsformat (kein rep:report)")
     accept = root.find("rep:assessment/rep:accept", _NS)
@@ -98,7 +102,7 @@ class ValidatorClient:
     def validate(self, xml: bytes, name: str = "rechnung.xml") -> Pruefergebnis:
         try:
             resp = httpx.post(
-                f"{self.base_url}/{name}", content=xml, headers={"Content-Type": "application/xml"}, timeout=self.timeout_s
+                f"{self.base_url}/{quote(name, safe='')}", content=xml, headers={"Content-Type": "application/xml"}, timeout=self.timeout_s
             )
         except httpx.HTTPError as exc:
             raise ValidatorError(f"Validator nicht erreichbar: {exc}") from exc
